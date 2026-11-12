@@ -51,8 +51,11 @@ export interface Scenario {
   architecture: Architecture
 }
 
-/** How a Request ended. Failed arrives with Kill in ticket 04. */
-export type Outcome = 'completed' | 'rejected' | 'timedOut'
+/** How a Request ended, as recorded at its Source. */
+export type Outcome = 'completed' | 'rejected' | 'failed' | 'timedOut'
+
+/** The Outcomes a Component can respond with. Timed out is decided by the Source alone. */
+export type ResponseOutcome = Exclude<Outcome, 'timedOut'>
 
 export interface SourceSnapshot {
   kind: 'source'
@@ -67,6 +70,10 @@ export interface SourceSnapshot {
 /** State of a Server or Database. */
 export interface WorkerSnapshot {
   kind: 'server' | 'database'
+  /** True while the user has switched this Component off. */
+  killed: boolean
+  /** Calls that have arrived here, whatever became of them. */
+  received: number
   /**
    * Concurrency slots in use: Requests being worked on plus Requests held
    * while waiting on a downstream call.
@@ -92,6 +99,8 @@ export interface WorkerSnapshot {
   rejected: number
   /** Simulated time this Component last Rejected a Request, or null if it never has. */
   lastRejectedAt: number | null
+  /** Requests that were inside this Component when it was Killed. */
+  failed: number
 }
 
 export type ComponentSnapshot = SourceSnapshot | WorkerSnapshot
@@ -115,5 +124,12 @@ export type Movement =
       from: ComponentId
       to: ComponentId
       time: number
-      outcome: 'completed' | 'rejected'
+      outcome: ResponseOutcome
     }
+
+/**
+ * A change made at the current simulated time. Ticket 07 adds the remaining
+ * kinds (settings, adding and removing Components and Connections) and
+ * records them for replay.
+ */
+export type Intervention = { kind: 'kill'; componentId: ComponentId } | { kind: 'revive'; componentId: ComponentId }

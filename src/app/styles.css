@@ -97,6 +97,46 @@ body,
   box-shadow: 0 0 0 1px var(--overloaded), 0 0 18px rgb(255 93 93 / 0.35);
 }
 
+.component--killed {
+  border-style: dashed;
+  border-color: var(--muted);
+  opacity: 0.6;
+}
+
+.status--killed {
+  color: var(--muted);
+}
+
+.kill-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 4px 0;
+  border: 1px solid rgb(255 93 93 / 0.6);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--overloaded);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kill-button:hover {
+  background: rgb(255 93 93 / 0.12);
+}
+
+.kill-button--revive {
+  border-color: rgb(62 207 142 / 0.6);
+  color: var(--healthy);
+}
+
+.kill-button--revive:hover {
+  background: rgb(62 207 142 / 0.12);
+}
+
+.component--killed .kill-button {
+  opacity: 1;
+}
+
 .component__header {
   display: flex;
   align-items: center;
@@ -122,6 +162,7 @@ body,
 }
 
 .outcome--rejected,
+.outcome--failed,
 .outcome--timed-out {
   color: var(--busy) !important;
 }
@@ -199,7 +240,7 @@ body,
   fill: var(--response-dot);
 }
 
-.request-dot--rejected {
+.request-dot--bad {
   fill: var(--overloaded);
 }
 

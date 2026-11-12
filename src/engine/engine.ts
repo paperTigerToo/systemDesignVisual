@@ -4,8 +4,10 @@ import type {
   ComponentId,
   ComponentSnapshot,
   DatabaseSpec,
+  Intervention,
   Movement,
   Outcome,
+  ResponseOutcome,
   Scenario,
   ServerSpec,
   Snapshot,
@@ -21,6 +23,8 @@ export interface Engine {
   readonly time: number
   /** Process every event up to and including simulated time `t`. */
   advanceTo(t: number): void
+  /** Apply a change at the current simulated time. */
+  applyIntervention(intervention: Intervention): void
   /** Per-Component state at the current simulated time. */
   snapshot(): Snapshot
   /**
@@ -35,9 +39,6 @@ export interface EngineOptions {
   /** Most movements held between calls to `takeMovements`. */
   movementCap?: number
 }
-
-/** The Outcomes a Component can respond with. Timed out is decided by the Source alone. */
-type ResponseOutcome = 'completed' | 'rejected'
 
 interface Request {
   id: number
@@ -56,11 +57,22 @@ interface Call {
   request: Request
   caller: ComponentId
   parent: Call | undefined
+  /**
+   * Set when the Component holding this call is Killed: the call has already
+   * been answered with Failed, so any later work on it is wasted and ignored.
+   */
+  cancelled: boolean
+}
+
+/** A Component's outgoing Connections, used round-robin. */
+interface Route {
+  targets: ComponentId[]
+  next: number
 }
 
 interface SourceState {
   spec: SourceSpec
-  target: ComponentId | undefined
+  route: Route
   created: number
   outcomes: Record<Outcome, number>
   /** Sum of latencies of Completed Requests. */
@@ -70,8 +82,11 @@ interface SourceState {
 /** A Server or Database. */
 interface WorkerState {
   spec: ServerSpec | DatabaseSpec
-  /** Where this Component calls after its own work; always undefined for a Database. */
-  downstream: ComponentId | undefined
+  /** Where this Component may call after its own work; always empty for a Database. */
+  route: Route
+  killed: boolean
+  /** Calls being worked on or held waiting on a downstream call, in arrival order. */
+  active: Set<Call>
   occupied: number
   /** Slot-seconds occupied up to `occupiedSince`. */
   occupiedTime: number
@@ -79,9 +94,11 @@ interface WorkerState {
   waitingOnCall: number
   backlog: Call[]
   backlogHead: number
+  received: number
   completed: number
   rejected: number
   lastRejectedAt: number | null
+  failed: number
 }
 
 type Event =
@@ -100,31 +117,38 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   let now = 0
   let nextRequestId = 1
 
-  const firstTarget = (id: ComponentId) => scenario.architecture.connections.find((c) => c.from === id)?.to
+  const routeFrom = (id: ComponentId): Route => ({
+    targets: scenario.architecture.connections.filter((c) => c.from === id).map((c) => c.to),
+    next: 0,
+  })
 
   for (const spec of scenario.architecture.components) {
     order.push(spec.id)
     if (spec.kind === 'source') {
       sources.set(spec.id, {
         spec,
-        target: firstTarget(spec.id),
+        route: routeFrom(spec.id),
         created: 0,
-        outcomes: { completed: 0, rejected: 0, timedOut: 0 },
+        outcomes: { completed: 0, rejected: 0, failed: 0, timedOut: 0 },
         latencySum: 0,
       })
     } else {
       workers.set(spec.id, {
         spec,
-        downstream: spec.kind === 'server' ? firstTarget(spec.id) : undefined,
+        route: spec.kind === 'server' ? routeFrom(spec.id) : { targets: [], next: 0 },
+        killed: false,
+        active: new Set(),
         occupied: 0,
         occupiedTime: 0,
         occupiedSince: 0,
         waitingOnCall: 0,
         backlog: [],
         backlogHead: 0,
+        received: 0,
         completed: 0,
         rejected: 0,
         lastRejectedAt: null,
+        failed: 0,
       })
     }
   }
@@ -142,6 +166,21 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
 
   function recordMovement(movement: Movement): void {
     if (movements.length < movementCap) movements.push(movement)
+  }
+
+  /** The next live target round-robin, skipping Killed Components; undefined when none are live. */
+  function chooseTarget(route: Route): ComponentId | undefined {
+    const count = route.targets.length
+    for (let i = 0; i < count; i++) {
+      const index = (route.next + i) % count
+      const target = route.targets[index]!
+      const worker = workers.get(target)
+      if (worker && !worker.killed) {
+        route.next = (index + 1) % count
+        return target
+      }
+    }
+    return undefined
   }
 
   function backlogLength(worker: WorkerState): number {
@@ -169,15 +208,25 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   function startWork(worker: WorkerState, call: Call): void {
     accrueOccupiedTime(worker)
     worker.occupied++
+    worker.active.add(call)
     heap.push(now + random.exponential(worker.spec.workTime), { kind: 'workDone', workerId: worker.spec.id, call })
+  }
+
+  /** Free the slot `call` held and start the next Request in the Backlog. */
+  function releaseSlot(worker: WorkerState, call: Call): void {
+    accrueOccupiedTime(worker)
+    worker.occupied--
+    worker.active.delete(call)
+    const next = takeFromBacklog(worker)
+    if (next) startWork(worker, next)
   }
 
   /** Send `request` from `caller` to `target`: start work, wait in the Backlog, or be Rejected. */
   function sendCall(caller: ComponentId, target: ComponentId, request: Request, parent: Call | undefined): void {
-    const worker = workers.get(target)
-    if (!worker) return
+    const worker = workers.get(target)!
     recordMovement({ direction: 'call', requestId: request.id, from: caller, to: target, time: now })
-    const call: Call = { request, caller, parent }
+    const call: Call = { request, caller, parent, cancelled: false }
+    worker.received++
     if (worker.occupied < worker.spec.concurrency) {
       startWork(worker, call)
     } else if (backlogLength(worker) < worker.spec.backlogCapacity) {
@@ -189,12 +238,13 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     }
   }
 
-  /** Free one of the worker's slots and start the next Request in its Backlog. */
-  function releaseSlot(worker: WorkerState): void {
-    accrueOccupiedTime(worker)
-    worker.occupied--
-    const next = takeFromBacklog(worker)
-    if (next) startWork(worker, next)
+  /** Record an Outcome at the Source, unless the Request already has one (it Timed out). */
+  function finishAtSource(request: Request, outcome: Outcome): void {
+    if (request.finished) return
+    request.finished = true
+    const source = sources.get(request.sourceId)!
+    source.outcomes[outcome]++
+    if (outcome === 'completed') source.latencySum += now - request.createdAt
   }
 
   /** `responder` has finished with `call`; deliver the Outcome to the caller. */
@@ -207,22 +257,42 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
       time: now,
       outcome,
     })
-    const source = sources.get(call.caller)
-    if (source) {
-      const request = call.request
-      // A response after the time limit is wasted work: the Outcome is already Timed out.
-      if (request.finished) return
-      request.finished = true
-      source.outcomes[outcome]++
-      if (outcome === 'completed') source.latencySum += now - request.createdAt
+    if (sources.has(call.caller)) {
+      finishAtSource(call.request, outcome)
       return
     }
-    // The caller is a Server waiting on this call: pass the Outcome back up.
+    // The caller is a Server waiting on this call: pass the Outcome back up,
+    // unless the caller was Killed meanwhile and has already answered Failed.
+    const parent = call.parent!
+    if (parent.cancelled) return
     const caller = workers.get(call.caller)!
     caller.waitingOnCall--
     if (outcome === 'completed') caller.completed++
-    releaseSlot(caller)
-    respond(caller.spec.id, call.parent!, outcome)
+    releaseSlot(caller, parent)
+    respond(caller.spec.id, parent, outcome)
+  }
+
+  function kill(worker: WorkerState): void {
+    if (worker.killed) return
+    accrueOccupiedTime(worker)
+    const inside = [...worker.active, ...worker.backlog.slice(worker.backlogHead)]
+    worker.killed = true
+    worker.active = new Set()
+    worker.backlog = []
+    worker.backlogHead = 0
+    worker.occupied = 0
+    worker.waitingOnCall = 0
+    for (const call of inside) {
+      call.cancelled = true
+      worker.failed++
+      respond(worker.spec.id, call, 'failed')
+    }
+  }
+
+  function revive(worker: WorkerState): void {
+    if (!worker.killed) return
+    worker.killed = false
+    worker.occupiedSince = now
   }
 
   function handle(event: Event): void {
@@ -234,21 +304,32 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         if (Number.isFinite(source.spec.timeLimit)) {
           heap.push(now + source.spec.timeLimit, { kind: 'timeLimit', request })
         }
-        if (source.target !== undefined) sendCall(source.spec.id, source.target, request, undefined)
+        const target = chooseTarget(source.route)
+        if (target === undefined) finishAtSource(request, 'failed')
+        else sendCall(source.spec.id, target, request, undefined)
         scheduleNextRequest(source)
         return
       }
       case 'workDone': {
+        const call = event.call
+        if (call.cancelled) return
         const worker = workers.get(event.workerId)!
-        if (worker.downstream !== undefined && workers.has(worker.downstream)) {
-          // Call-and-wait: keep the slot occupied until the downstream call responds.
-          worker.waitingOnCall++
-          sendCall(worker.spec.id, worker.downstream, event.call.request, event.call)
+        if (worker.route.targets.length > 0) {
+          const target = chooseTarget(worker.route)
+          if (target !== undefined) {
+            // Call-and-wait: keep the slot occupied until the downstream call responds.
+            worker.waitingOnCall++
+            sendCall(worker.spec.id, target, call.request, call)
+          } else {
+            // Every downstream Component is Killed.
+            releaseSlot(worker, call)
+            respond(worker.spec.id, call, 'failed')
+          }
           return
         }
         worker.completed++
-        releaseSlot(worker)
-        respond(worker.spec.id, event.call, 'completed')
+        releaseSlot(worker, call)
+        respond(worker.spec.id, call, 'completed')
         return
       }
       case 'timeLimit': {
@@ -277,16 +358,23 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
       if (t > now) now = t
     },
 
+    applyIntervention(intervention) {
+      const worker = workers.get(intervention.componentId)
+      if (!worker) throw new Error(`Only a Server or Database can be Killed or revived: ${intervention.componentId}`)
+      if (intervention.kind === 'kill') kill(worker)
+      else revive(worker)
+    },
+
     snapshot() {
       const components: Record<ComponentId, ComponentSnapshot> = {}
       for (const id of order) {
         const source = sources.get(id)
         if (source) {
-          const { completed, rejected, timedOut } = source.outcomes
+          const { completed, rejected, failed, timedOut } = source.outcomes
           components[id] = {
             kind: 'source',
             created: source.created,
-            inProgress: source.created - completed - rejected - timedOut,
+            inProgress: source.created - completed - rejected - failed - timedOut,
             outcomes: { ...source.outcomes },
             averageLatency: completed === 0 ? null : source.latencySum / completed,
           }
@@ -295,6 +383,8 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         const worker = workers.get(id)!
         components[id] = {
           kind: worker.spec.kind,
+          killed: worker.killed,
+          received: worker.received,
           occupied: worker.occupied,
           waitingOnCall: worker.waitingOnCall,
           concurrency: worker.spec.concurrency,
@@ -305,6 +395,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
           completed: worker.completed,
           rejected: worker.rejected,
           lastRejectedAt: worker.lastRejectedAt,
+          failed: worker.failed,
         }
       }
       return { time: now, components }

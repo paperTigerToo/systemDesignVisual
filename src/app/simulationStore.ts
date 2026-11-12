@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import { createEngine, type ComponentId, type Engine, type Movement, type Scenario, type Snapshot } from '../engine'
+import {
+  createEngine,
+  type ComponentId,
+  type Engine,
+  type Intervention,
+  type Movement,
+  type Scenario,
+  type Snapshot,
+} from '../engine'
 import { defaultScenario } from './defaultScenario'
 
 /** How long, in simulated seconds, a dot takes to cross a Connection. Purely cosmetic. */
@@ -14,8 +22,8 @@ export interface Dot {
   from: ComponentId
   to: ComponentId
   direction: Movement['direction']
-  /** True for a response carrying a Rejected Outcome. */
-  rejected: boolean
+  /** True for a response carrying a Rejected or Failed Outcome. */
+  bad: boolean
   startedAt: number
 }
 
@@ -33,6 +41,8 @@ interface SimulationState {
    */
   recentUtilisation: Record<ComponentId, number>
   togglePlaying(): void
+  /** Apply a change at the current simulated time, playing or paused. */
+  applyIntervention(intervention: Intervention): void
   /** Advance the Run by `realSeconds` of wall-clock time at 1x speed. */
   tick(realSeconds: number): void
 }
@@ -66,6 +76,12 @@ export const useSimulation = create<SimulationState>()((set, get) => ({
     set({ playing: !get().playing })
   },
 
+  applyIntervention(intervention) {
+    const { engine } = get()
+    engine.applyIntervention(intervention)
+    set({ snapshot: engine.snapshot() })
+  },
+
   tick(realSeconds) {
     const { engine, playing, dots, snapshot: previous, recentUtilisation } = get()
     if (!playing) return
@@ -79,7 +95,7 @@ export const useSimulation = create<SimulationState>()((set, get) => ({
         from: movement.from,
         to: movement.to,
         direction: movement.direction,
-        rejected: movement.direction === 'response' && movement.outcome === 'rejected',
+        bad: movement.direction === 'response' && (movement.outcome === 'rejected' || movement.outcome === 'failed'),
         startedAt: movement.time,
       })
     }

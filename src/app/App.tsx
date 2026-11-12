@@ -14,6 +14,9 @@ const nodes: ComponentNode[] = defaultScenario.architecture.components.map((comp
     type: component.kind,
     position: { x: layout?.x ?? 0, y: layout?.y ?? 0 },
     data: { label: layout?.label ?? component.id },
+    // React Flow turns off pointer events on nodes that are not draggable, selectable or
+    // connectable, which would swallow clicks on the Kill button.
+    style: { pointerEvents: 'all' },
   }
 })
 

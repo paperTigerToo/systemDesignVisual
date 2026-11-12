@@ -1,6 +1,6 @@
 # 04: Several Connections, round-robin, Kill and revive
 
-Status: open
+Status: resolved
 Type: task
 Blocked by: 03
 
@@ -34,3 +34,14 @@ Recording Interventions (ticket 07), adding or removing Components from the UI (
 Kill one of three Servers mid-Run and watch the other two change colour. Kill the Database and watch everything fail; revive it and watch recovery.
 
 ## Comments
+
+**2026-11-12, resolved.** Notes for later tickets:
+
+- **The engine now has `applyIntervention(intervention)`**, which applies the change at the current simulated time. `Intervention` currently has only `{ kind: 'kill' | 'revive', componentId }`. Ticket 07 should add the other kinds to that type and record them for replay, not add a second entry point. Killing an already Killed Component, or reviving a live one, does nothing. Only a Server or Database can be Killed; anything else throws.
+- `Outcome` now includes `failed`, and there is a `ResponseOutcome` type (every Outcome except Timed out). `SourceSnapshot.outcomes.failed` counts Requests that were inside a Killed Component, or had no live Component to go to.
+- `WorkerSnapshot` gained `killed`, `received` (calls that arrived, whatever became of them) and `failed` (Requests inside it when it was Killed).
+- Each Source and Server keeps its outgoing Connections as a route with a round-robin pointer; Killed targets are skipped. A Server whose downstream targets are all Killed finishes its own work and then responds Failed. A Server with no outgoing Connections still responds Completed itself.
+- Kill works by cancelling calls: every call inside the Component is marked cancelled and answered Failed straight away. Later work on a cancelled call is ignored when it finishes: its own `workDone`, or a downstream response arriving for a parent call that was cancelled. That is how "work already called downstream carries on as wasted" is implemented.
+- **UI pitfall.** React Flow sets `pointer-events: none` on nodes that are not draggable, selectable or connectable, which silently swallowed clicks on the Kill button. Each node now sets `style: { pointerEvents: 'all' }` in `App.tsx`. Ticket 06 makes nodes draggable, so this may no longer be needed then.
+- Failed responses share the red "bad" dot with Rejected ones.
+- Default architecture: Source (Rate 18) to three Servers (Concurrency 2, Work time 0.2 s, Backlog 20) to a Database (Concurrency 8, Work time 0.05 s, Backlog 40). Checked in the browser: all three are Healthy or Busy. After killing Web server 2, the other two turned Overloaded within a few seconds, with Backlogs at 13/20 and 20/20 and Rejections and time-outs following. Killing the Database turned every response red; reviving it brought recovery.

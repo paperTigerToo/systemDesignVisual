@@ -8,16 +8,18 @@ export type ComponentNode = Node<ComponentNodeData>
 /** How long, in simulated seconds, a Component stays red after it last Rejected a Request. */
 const REJECTION_MEMORY = 1
 
-type Status = 'healthy' | 'busy' | 'overloaded'
+type Status = 'healthy' | 'busy' | 'overloaded' | 'killed'
 
 const statusLabel: Record<Status, string> = {
   healthy: 'Healthy',
   busy: 'Busy',
   overloaded: 'Overloaded',
+  killed: 'Killed',
 }
 
 /** Status from Utilisation averaged over the last second or so, plus any recent Rejections. */
 function statusOf(worker: WorkerSnapshot, recentUtilisation: number, time: number): Status {
+  if (worker.killed) return 'killed'
   const rejectingNow = worker.lastRejectedAt !== null && time - worker.lastRejectedAt < REJECTION_MEMORY
   if (rejectingNow || recentUtilisation >= 0.95) return 'overloaded'
   if (recentUtilisation >= 0.7) return 'busy'
@@ -45,6 +47,8 @@ export function SourceNode({ id, data }: NodeProps<ComponentNode>) {
           <dd>{snapshot.outcomes.completed}</dd>
           <dt className="outcome--rejected">Rejected</dt>
           <dd>{snapshot.outcomes.rejected}</dd>
+          <dt className="outcome--failed">Failed</dt>
+          <dd>{snapshot.outcomes.failed}</dd>
           <dt className="outcome--timed-out">Timed out</dt>
           <dd>{snapshot.outcomes.timedOut}</dd>
           <dt>In progress</dt>
@@ -84,8 +88,11 @@ function WorkerNode({
   const snapshot = useComponentSnapshot(id)
   const time = useSimulation((state) => state.snapshot.time)
   const recentUtilisation = useSimulation((state) => state.recentUtilisation[id] ?? 0)
+  const applyIntervention = useSimulation((state) => state.applyIntervention)
   if (snapshot?.kind !== 'server' && snapshot?.kind !== 'database') return null
   const status = statusOf(snapshot, recentUtilisation, time)
+  const toggleKilled = () =>
+    applyIntervention({ kind: snapshot.killed ? 'revive' : 'kill', componentId: id })
 
   return (
     <div className={`component component--${status}`}>
@@ -112,8 +119,17 @@ function WorkerNode({
         <dd>{snapshot.completed}</dd>
         <dt className="outcome--rejected">Rejected</dt>
         <dd>{snapshot.rejected}</dd>
+        <dt className="outcome--failed">Failed when Killed</dt>
+        <dd>{snapshot.failed}</dd>
       </dl>
       <BacklogBar backlog={snapshot.backlog} capacity={snapshot.backlogCapacity} />
+      <button
+        type="button"
+        className={`kill-button nodrag ${snapshot.killed ? 'kill-button--revive' : ''}`}
+        onClick={toggleKilled}
+      >
+        {snapshot.killed ? 'Revive' : 'Kill'}
+      </button>
       {callsDownstream && <Handle type="source" position={Position.Right} isConnectable={false} />}
     </div>
   )
