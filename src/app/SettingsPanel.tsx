@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ComponentSpec } from '../engine'
 import { clampSetting, kindLabel, settingFields, type SettingField } from './design'
-import { useSimulation } from './simulationStore'
+import { hasStarted, useSimulation } from './simulationStore'
 
 function NumberSetting({ component, field }: { component: ComponentSpec; field: SettingField }) {
   const stored = (component as unknown as Record<string, number>)[field.key] ?? 0
@@ -35,6 +35,9 @@ function NumberSetting({ component, field }: { component: ComponentSpec; field: 
           value={draft ?? String(displayed)}
           onChange={(event) => {
             setDraft(event.target.value)
+            // Before the Run starts, apply as you type. During a Run each change is a recorded
+            // Intervention, so wait for Enter or leaving the field rather than recording every keystroke.
+            if (hasStarted(useSimulation.getState())) return
             const value = Number(event.target.value)
             if (event.target.value.trim() !== '' && value >= field.min && value <= field.max) commit(event.target.value, false)
           }}
@@ -141,6 +144,7 @@ function ProblemList() {
 
 /** Settings for whatever is selected, and the list of problems blocking Play. */
 export function SettingsPanel() {
+  const started = useSimulation(hasStarted)
   const selection = useSimulation((state) => state.selection)
   const component = useSimulation((state) => {
     const selected = state.selection
@@ -164,7 +168,11 @@ export function SettingsPanel() {
         Problems {problemCount > 0 && <span className="badge">{problemCount}</span>}
       </h2>
       <ProblemList />
-      <p className="panel__hint panel__hint--footer">Changing the architecture restarts the Run from zero.</p>
+      <p className="panel__hint panel__hint--footer">
+        {started
+          ? 'The Run is under way: changes apply live and are recorded. Press Enter to apply a number.'
+          : 'Changes before the Run starts set up the starting architecture.'}
+      </p>
     </aside>
   )
 }

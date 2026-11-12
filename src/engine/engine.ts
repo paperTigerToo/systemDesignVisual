@@ -3,6 +3,7 @@ import { createRandom, type Random } from './random'
 import type {
   ComponentId,
   ComponentSnapshot,
+  ComponentSpec,
   DatabaseSpec,
   Intervention,
   Movement,
@@ -11,6 +12,7 @@ import type {
   ResponseOutcome,
   Scenario,
   ServerSpec,
+  SettingKey,
   Snapshot,
   SourceSpec,
 } from './types'
@@ -24,7 +26,10 @@ export interface Engine {
   readonly time: number
   /** Process every event up to and including simulated time `t`. */
   advanceTo(t: number): void
-  /** Apply a change at the current simulated time. */
+  /**
+   * Apply a change at the current simulated time. Throws if it names a
+   * Component that does not exist, or re-adds an id used earlier in the Run.
+   */
   applyIntervention(intervention: Intervention): void
   /** Per-Component state at the current simulated time. */
   snapshot(): Snapshot
@@ -60,8 +65,9 @@ interface Call {
   caller: ComponentId
   parent: Call | undefined
   /**
-   * Set when the Component holding this call is Killed: the call has already
-   * been answered with Failed, so any later work on it is wasted and ignored.
+   * Set when the Component holding this call is Killed or removed: the call
+   * has already been answered with Failed, so any later work on it is wasted
+   * and ignored.
    */
   cancelled: boolean
 }
@@ -72,9 +78,17 @@ interface Route {
   next: number
 }
 
+/**
+ * State kept for every Component ever added in this Run. A removed Component
+ * keeps its state (so late responses to it have somewhere harmless to land)
+ * but is marked removed and leaves the snapshot.
+ */
 interface SourceState {
   spec: SourceSpec
   route: Route
+  removed: boolean
+  /** Bumped whenever the Rate changes or the Source is removed; older generate events are ignored. */
+  generation: number
   created: number
   outcomes: Record<Outcome, number>
   /** Sum of latencies of Completed Requests. */
@@ -84,8 +98,9 @@ interface SourceState {
 /** A Server or Database. */
 interface WorkerState {
   spec: ServerSpec | DatabaseSpec
-  /** Where this Component may call after its own work; always empty for a Database. */
+  /** Where this Component may call after its own work; ignored for a Database. */
   route: Route
+  removed: boolean
   killed: boolean
   /** Calls being worked on or held waiting on a downstream call, in arrival order. */
   active: Set<Call>
@@ -112,6 +127,7 @@ interface QueueState {
   spec: QueueSpec
   /** Downstream Servers and Databases it hands Requests to. */
   route: Route
+  removed: boolean
   killed: boolean
   held: Held[]
   heldHead: number
@@ -126,7 +142,7 @@ interface QueueState {
 }
 
 type Event =
-  | { kind: 'generate'; sourceId: ComponentId }
+  | { kind: 'generate'; sourceId: ComponentId; generation: number }
   | { kind: 'workDone'; workerId: ComponentId; call: Call }
   | { kind: 'timeLimit'; request: Request }
 
@@ -142,34 +158,40 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   const sources = new Map<ComponentId, SourceState>()
   const workers = new Map<ComponentId, WorkerState>()
   const queues = new Map<ComponentId, QueueState>()
-  /** For each Server or Database, the Queues that hand it Requests, in declaration order. */
+  /** For each Server or Database, the Queues that hand it Requests, in the order they were connected. */
   const feeders = new Map<ComponentId, QueueState[]>()
-  const order: ComponentId[] = []
+  /** Live Components in the order they were added; the snapshot follows it. */
+  let order: ComponentId[] = []
+  /** Every id used in this Run, including removed Components. */
+  const knownIds = new Set<ComponentId>()
   let movements: Movement[] = []
   let now = 0
   let nextRequestId = 1
 
-  const routeFrom = (id: ComponentId): Route => ({
-    targets: scenario.architecture.connections.filter((c) => c.from === id).map((c) => c.to),
-    next: 0,
-  })
+  const emptyRoute = (): Route => ({ targets: [], next: 0 })
 
-  for (const spec of scenario.architecture.components) {
+  function createComponent(spec: ComponentSpec): void {
+    if (knownIds.has(spec.id)) throw new Error(`Component id already used in this Run: ${spec.id}`)
+    knownIds.add(spec.id)
     order.push(spec.id)
+    // Copy the spec: settings change during the Run and must not leak back to the caller's objects.
     switch (spec.kind) {
       case 'source':
         sources.set(spec.id, {
-          spec,
-          route: routeFrom(spec.id),
+          spec: { ...spec },
+          route: emptyRoute(),
+          removed: false,
+          generation: 0,
           created: 0,
           outcomes: { completed: 0, rejected: 0, failed: 0, timedOut: 0 },
           latencySum: 0,
         })
-        break
+        return
       case 'queue':
         queues.set(spec.id, {
-          spec,
-          route: routeFrom(spec.id),
+          spec: { ...spec },
+          route: emptyRoute(),
+          removed: false,
           killed: false,
           held: [],
           heldHead: 0,
@@ -182,16 +204,17 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
           lost: 0,
           failed: 0,
         })
-        break
+        return
       default:
         workers.set(spec.id, {
-          spec,
-          route: spec.kind === 'server' ? routeFrom(spec.id) : { targets: [], next: 0 },
+          spec: { ...spec },
+          route: emptyRoute(),
+          removed: false,
           killed: false,
           active: new Set(),
           occupied: 0,
           occupiedTime: 0,
-          occupiedSince: 0,
+          occupiedSince: now,
           waitingOnCall: 0,
           backlog: [],
           backlogHead: 0,
@@ -204,15 +227,39 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     }
   }
 
-  for (const queue of queues.values()) {
-    for (const target of queue.route.targets) {
-      if (!workers.has(target)) continue
-      const list = feeders.get(target) ?? []
-      list.push(queue)
-      feeders.set(target, list)
+  /** The route of a live Source, Server, Database or Queue. */
+  function routeOf(id: ComponentId): Route | undefined {
+    const component = sources.get(id) ?? workers.get(id) ?? queues.get(id)
+    return component && !component.removed ? component.route : undefined
+  }
+
+  function connect(from: ComponentId, to: ComponentId): void {
+    const route = routeOf(from)
+    if (!route || !routeOf(to)) throw new Error(`Cannot connect missing Components: ${from} -> ${to}`)
+    if (route.targets.includes(to)) return
+    route.targets.push(to)
+    const queue = queues.get(from)
+    if (queue && workers.has(to)) {
+      feeders.set(to, [...(feeders.get(to) ?? []), queue])
+      pump(queue)
     }
   }
 
+  function disconnect(from: ComponentId, to: ComponentId): void {
+    const route = routeOf(from)
+    if (!route) return
+    const index = route.targets.indexOf(to)
+    if (index === -1) return
+    route.targets.splice(index, 1)
+    // Keep the round-robin pointer on the same next target where possible.
+    if (index < route.next) route.next--
+    if (route.next >= route.targets.length) route.next = 0
+    const queue = queues.get(from)
+    if (queue) feeders.set(to, (feeders.get(to) ?? []).filter((q) => q !== queue))
+  }
+
+  for (const spec of scenario.architecture.components) createComponent(spec)
+  for (const { from, to } of scenario.architecture.connections) connect(from, to)
   // Schedule each Source's first Request in declaration order.
   for (const id of order) {
     const source = sources.get(id)
@@ -220,24 +267,28 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   }
 
   function scheduleNextRequest(source: SourceState): void {
-    if (source.spec.rate <= 0) return
-    heap.push(now + random.exponential(1 / source.spec.rate), { kind: 'generate', sourceId: source.spec.id })
+    if (source.removed || source.spec.rate <= 0) return
+    heap.push(now + random.exponential(1 / source.spec.rate), {
+      kind: 'generate',
+      sourceId: source.spec.id,
+      generation: source.generation,
+    })
   }
 
   function recordMovement(movement: Movement): void {
     if (movements.length < movementCap) movements.push(movement)
   }
 
-  /** A Server, Database or Queue that is not Killed. */
+  /** A Server, Database or Queue that is neither Killed nor removed. */
   function isLive(id: ComponentId): boolean {
     const component = workers.get(id) ?? queues.get(id)
-    return component !== undefined && !component.killed
+    return component !== undefined && !component.killed && !component.removed
   }
 
   /** A live Server or Database with a free Concurrency slot. */
   function hasFreeSlot(id: ComponentId): boolean {
     const worker = workers.get(id)
-    return worker !== undefined && !worker.killed && worker.occupied < worker.spec.concurrency
+    return worker !== undefined && !worker.killed && !worker.removed && worker.occupied < worker.spec.concurrency
   }
 
   /** The next target round-robin that passes `accepts`; undefined when none does. */
@@ -289,19 +340,27 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     heap.push(now + random.exponential(worker.spec.workTime), { kind: 'workDone', workerId: worker.spec.id, call })
   }
 
-  /** Free the slot `call` held, start the next Request in the Backlog, and let any Queue use a slot still free. */
+  /** Start Backlog work in any free slots, then let feeding Queues use what is still free. */
+  function fillFreeSlots(worker: WorkerState): void {
+    while (worker.occupied < worker.spec.concurrency) {
+      const next = takeFromBacklog(worker)
+      if (!next) break
+      startWork(worker, next)
+    }
+    pumpFeeders(worker)
+  }
+
+  /** Free the slot `call` held and give it to waiting work. */
   function releaseSlot(worker: WorkerState, call: Call): void {
     accrueOccupiedTime(worker)
     worker.occupied--
     worker.active.delete(call)
-    const next = takeFromBacklog(worker)
-    if (next) startWork(worker, next)
-    pumpFeeders(worker)
+    fillFreeSlots(worker)
   }
 
   /** Hand held Requests downstream while some target has a free slot, oldest first. */
   function pump(queue: QueueState): void {
-    if (queue.killed) return
+    if (queue.killed || queue.removed) return
     for (;;) {
       if (queueLength(queue.held, queue.heldHead) === 0) return
       const target = chooseTarget(queue.route, hasFreeSlot)
@@ -385,7 +444,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
       return
     }
     // The caller is a Server waiting on this call: pass the Outcome back up,
-    // unless the caller was Killed meanwhile and has already answered Failed.
+    // unless the caller was Killed or removed meanwhile and has already answered Failed.
     const parent = call.parent!
     if (parent.cancelled) return
     const caller = workers.get(call.caller)!
@@ -432,10 +491,66 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     queue.killed = false
   }
 
+  function removeComponent(id: ComponentId): void {
+    const source = sources.get(id)
+    const worker = workers.get(id)
+    const queue = queues.get(id)
+    if (source && !source.removed) {
+      // Requests already sent carry on; their Outcomes land on the removed Source's state.
+      source.removed = true
+      source.generation++
+    } else if (worker && !worker.removed) {
+      killWorker(worker)
+      worker.removed = true
+    } else if (queue && !queue.removed) {
+      killQueue(queue)
+      queue.removed = true
+    } else {
+      throw new Error(`No such Component: ${id}`)
+    }
+    for (const other of order) {
+      if (other === id) continue
+      disconnect(other, id)
+    }
+    const own = source ?? worker ?? queue!
+    for (const target of [...own.route.targets]) disconnect(id, target)
+    feeders.delete(id)
+    order = order.filter((other) => other !== id)
+  }
+
+  function setSetting(id: ComponentId, key: SettingKey, value: number): void {
+    const source = sources.get(id)
+    const worker = workers.get(id)
+    const queue = queues.get(id)
+    if (source && !source.removed && (key === 'rate' || key === 'timeLimit')) {
+      source.spec[key] = value
+      if (key === 'rate') {
+        // Inter-arrival times are memoryless, so drawing a fresh gap from now is statistically sound
+        // and makes a big Rate change take effect at once rather than after the old gap.
+        source.generation++
+        scheduleNextRequest(source)
+      }
+      return
+    }
+    if (worker && !worker.removed && (key === 'concurrency' || key === 'workTime' || key === 'backlogCapacity')) {
+      accrueOccupiedTime(worker)
+      worker.spec[key] = value
+      // Raising Concurrency puts waiting work into the new slots now; lowering it interrupts nothing.
+      if (key === 'concurrency' && !worker.killed) fillFreeSlots(worker)
+      return
+    }
+    if (queue && !queue.removed && key === 'capacity') {
+      queue.spec.capacity = value
+      return
+    }
+    throw new Error(`Cannot set ${key} on ${id}`)
+  }
+
   function handle(event: Event): void {
     switch (event.kind) {
       case 'generate': {
         const source = sources.get(event.sourceId)!
+        if (event.generation !== source.generation || source.removed) return
         const request: Request = { id: nextRequestId++, sourceId: source.spec.id, createdAt: now, finished: false }
         source.created++
         if (Number.isFinite(source.spec.timeLimit)) {
@@ -451,7 +566,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         const call = event.call
         if (call.cancelled) return
         const worker = workers.get(event.workerId)!
-        if (worker.route.targets.length > 0) {
+        if (worker.spec.kind === 'server' && worker.route.targets.length > 0) {
           const target = chooseTarget(worker.route, isLive)
           if (target !== undefined) {
             // Call-and-wait: keep the slot occupied until the downstream call responds.
@@ -479,6 +594,14 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     }
   }
 
+  function liveWorkerOrQueue(id: ComponentId) {
+    const worker = workers.get(id)
+    if (worker && !worker.removed) return { worker }
+    const queue = queues.get(id)
+    if (queue && !queue.removed) return { queue }
+    throw new Error(`Only a Server, Database or Queue can be Killed or revived: ${id}`)
+  }
+
   return {
     get time() {
       return now
@@ -496,17 +619,37 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     },
 
     applyIntervention(intervention) {
-      const id = intervention.componentId
-      const worker = workers.get(id)
-      const queue = queues.get(id)
-      if (worker) {
-        if (intervention.kind === 'kill') killWorker(worker)
-        else reviveWorker(worker)
-      } else if (queue) {
-        if (intervention.kind === 'kill') killQueue(queue)
-        else reviveQueue(queue)
-      } else {
-        throw new Error(`Only a Server, Database or Queue can be Killed or revived: ${id}`)
+      switch (intervention.kind) {
+        case 'kill':
+        case 'revive': {
+          const { worker, queue } = liveWorkerOrQueue(intervention.componentId)
+          if (worker) {
+            if (intervention.kind === 'kill') killWorker(worker)
+            else reviveWorker(worker)
+          } else if (queue) {
+            if (intervention.kind === 'kill') killQueue(queue)
+            else reviveQueue(queue)
+          }
+          return
+        }
+        case 'setSetting':
+          setSetting(intervention.componentId, intervention.key, intervention.value)
+          return
+        case 'addComponent': {
+          createComponent(intervention.component)
+          const source = sources.get(intervention.component.id)
+          if (source) scheduleNextRequest(source)
+          return
+        }
+        case 'removeComponent':
+          removeComponent(intervention.componentId)
+          return
+        case 'addConnection':
+          connect(intervention.from, intervention.to)
+          return
+        case 'removeConnection':
+          disconnect(intervention.from, intervention.to)
+          return
       }
     },
 

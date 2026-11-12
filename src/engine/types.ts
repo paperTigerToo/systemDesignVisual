@@ -158,9 +158,25 @@ export type Movement =
       outcome: ResponseOutcome
     }
 
+/** A numeric setting of a Component, by the name it has in that Component's spec. */
+export type SettingKey = 'rate' | 'timeLimit' | 'concurrency' | 'workTime' | 'backlogCapacity' | 'capacity'
+
 /**
- * A change made at the current simulated time. Ticket 07 adds the remaining
- * kinds (settings, adding and removing Components and Connections) and
- * records them for replay.
+ * A change to the architecture or its settings, applied at the current
+ * simulated time. Changes apply to future work only: nothing already in
+ * progress is interrupted, except by kill and removeComponent.
  */
-export type Intervention = { kind: 'kill'; componentId: ComponentId } | { kind: 'revive'; componentId: ComponentId }
+export type Intervention =
+  | { kind: 'kill'; componentId: ComponentId }
+  | { kind: 'revive'; componentId: ComponentId }
+  | { kind: 'setSetting'; componentId: ComponentId; key: SettingKey; value: number }
+  | { kind: 'addComponent'; component: ComponentSpec }
+  | { kind: 'removeComponent'; componentId: ComponentId }
+  | { kind: 'addConnection'; from: ComponentId; to: ComponentId }
+  | { kind: 'removeConnection'; from: ComponentId; to: ComponentId }
+
+/** An Intervention stamped with the simulated time it was applied. */
+export interface TimedIntervention {
+  time: number
+  intervention: Intervention
+}

@@ -1,13 +1,16 @@
 import { create } from 'zustand'
 import {
   createEngine,
+  isHazard,
   validateArchitecture,
   type ComponentId,
   type Engine,
   type Intervention,
   type Movement,
   type Problem,
+  type SettingKey,
   type Snapshot,
+  type TimedIntervention,
 } from '../engine'
 import * as edits from './design'
 import { starterDesign, toScenario, type ComponentKind, type Design } from './design'
@@ -16,10 +19,17 @@ import { starterDesign, toScenario, type ComponentKind, type Design } from './de
 export const DOT_TRAVEL_TIME = 0.6
 /** Most dots drawn at once across the whole canvas. */
 const MAX_DOTS = 150
-/** Longest real time a single frame may advance, so a backgrounded tab does not jump. */
+/** Longest real time a single frame may cover, so a backgrounded tab does not jump ahead. */
 const MAX_FRAME_SECONDS = 0.1
+/** Most wall-clock milliseconds the engine may use per frame before the Run falls behind. */
+const FRAME_BUDGET_MS = 10
+/** Simulated seconds advanced between checks of the frame budget. */
+const BUDGET_CHUNK = 0.02
 /** Time constant, in simulated seconds, of the smoothing applied to Utilisation for status colours. */
 const UTILISATION_SMOOTHING = 1
+
+export const SPEEDS = [0.5, 1, 2, 4] as const
+export type Speed = (typeof SPEEDS)[number]
 
 export interface Dot {
   key: string
@@ -35,16 +45,27 @@ export interface Dot {
 export type Selection = { kind: 'component'; id: ComponentId } | { kind: 'connection'; from: ComponentId; to: ComponentId } | null
 
 interface SimulationState {
-  /** The architecture being edited, with its layout. */
+  /** The architecture as it is now, including changes made during the Run. */
   design: Design
-  /** Why the design cannot be played; empty when it can. */
+  /** The architecture at simulated time zero; reset returns to it. */
+  startDesign: Design
+  /** Why the design cannot be played, or what is unfinished; empty when all is well. */
   problems: Problem[]
+  selection: Selection
   /** Increases each time a whole design is loaded, so the canvas knows to refit its view. */
   loadCount: number
-  selection: Selection
+  /** Every change made since time zero, in order, stamped with its simulated time. */
+  interventions: TimedIntervention[]
+  /** Ids used at any point in this Run, so a removed Component's id is never handed out again. */
+  knownIds: ReadonlySet<ComponentId>
+  /** Why the last edit was refused, if it was. */
+  notice: string | null
 
   engine: Engine
   playing: boolean
+  speed: Speed
+  /** True when the last frame ran out of time budget before catching up with the clock. */
+  behind: boolean
   snapshot: Snapshot
   dots: Dot[]
   /**
@@ -63,20 +84,41 @@ interface SimulationState {
   addConnection(from: ComponentId, to: ComponentId): void
   removeConnection(from: ComponentId, to: ComponentId): void
   select(selection: Selection): void
+  dismissNotice(): void
 
   togglePlaying(): void
-  /** Apply a change at the current simulated time, playing or paused. */
+  setSpeed(speed: Speed): void
+  /** Back to time zero and the starting architecture, keeping where Components sit on the canvas. */
+  reset(): void
+  /** Kill or revive, at the current simulated time, playing or paused. */
   applyIntervention(intervention: Intervention): void
-  /** Advance the Run by `realSeconds` of wall-clock time at 1x speed. */
+  /** Advance the Run by `realSeconds` of wall-clock time at the chosen speed. */
   tick(realSeconds: number): void
+}
+
+/** True once the Run has moved past time zero or recorded a change; from then on edits apply live. */
+export function hasStarted(state: Pick<SimulationState, 'engine' | 'interventions'>): boolean {
+  return state.engine.time > 0 || state.interventions.length > 0
+}
+
+/** True when Play should be refused: anything wrong before the Run starts, or a hazard after. */
+export function playBlocked(state: Pick<SimulationState, 'engine' | 'interventions' | 'problems'>): boolean {
+  return hasStarted(state) ? state.problems.some(isHazard) : state.problems.length > 0
 }
 
 /** A fresh, paused Run of `design`, starting at simulated time zero. */
 function freshRun(design: Design) {
   const engine = createEngine(toScenario(design), { movementCap: MAX_DOTS })
   return {
+    design,
+    startDesign: design,
+    problems: validateArchitecture(design.architecture),
+    interventions: [] as TimedIntervention[],
+    knownIds: new Set(design.architecture.components.map((c) => c.id)) as ReadonlySet<ComponentId>,
+    notice: null,
     engine,
     playing: false,
+    behind: false,
     snapshot: engine.snapshot(),
     dots: [] as Dot[],
     recentUtilisation: {} as Record<ComponentId, number>,
@@ -100,46 +142,95 @@ function smoothUtilisation(previous: Snapshot, next: Snapshot, smoothed: Record<
   return result
 }
 
+function toDot(movement: Movement): Dot {
+  return {
+    key: `${movement.requestId}:${movement.direction}:${movement.from}`,
+    from: movement.from,
+    to: movement.to,
+    direction: movement.direction,
+    bad: movement.direction === 'response' && (movement.outcome === 'rejected' || movement.outcome === 'failed'),
+    startedAt: movement.time,
+  }
+}
+
 export const useSimulation = create<SimulationState>()((set, get) => {
   /**
-   * Apply an edit to the architecture. Until live editing arrives (ticket 07),
-   * any change to what the engine simulates resets the Run to time zero and pauses it.
+   * Apply an edit to the architecture. Before the Run starts this simply
+   * rebuilds the engine. Once it has started the edit becomes Interventions
+   * applied live at the current simulated time, unless the resulting
+   * architecture would have a hazard, in which case it is refused with a reason.
    */
-  const editArchitecture = (change: (design: Design) => Design, selection?: Selection) => {
-    const design = change(get().design)
-    if (design === get().design) return
+  const editArchitecture = (design: Design, interventions: Intervention[], selection?: Selection) => {
+    const state = get()
+    if (design === state.design) return
+    const selectionPatch = selection === undefined ? {} : { selection }
+
+    if (!hasStarted(state)) {
+      set({ ...freshRun(design), loadCount: state.loadCount, ...selectionPatch })
+      return
+    }
+
+    const problems = validateArchitecture(design.architecture)
+    const hazard = problems.find(isHazard)
+    if (hazard) {
+      set({ notice: `Not applied: ${hazard.message}` })
+      return
+    }
+    const { engine } = state
+    const knownIds = new Set(state.knownIds)
+    const recorded = [...state.interventions]
+    try {
+      for (const intervention of interventions) {
+        engine.applyIntervention(intervention)
+        recorded.push({ time: engine.time, intervention })
+        if (intervention.kind === 'addComponent') knownIds.add(intervention.component.id)
+      }
+    } catch (error) {
+      set({ notice: `Not applied: ${error instanceof Error ? error.message : String(error)}` })
+      return
+    }
     set({
       design,
-      problems: validateArchitecture(design.architecture),
-      ...freshRun(design),
-      ...(selection === undefined ? {} : { selection }),
+      problems,
+      interventions: recorded,
+      knownIds,
+      notice: null,
+      snapshot: engine.snapshot(),
+      ...selectionPatch,
     })
   }
 
-  /** Apply an edit that only changes the layout or names: the Run carries on. */
-  const editLayout = (change: (design: Design) => Design) => set({ design: change(get().design) })
+  /** Apply an edit that only changes the layout or names: never an Intervention. */
+  const editLayout = (change: (design: Design) => Design) => {
+    const design = change(get().design)
+    // Keep the starting layout in step so a reset does not move things back.
+    const startDesign = change(get().startDesign)
+    set({ design, startDesign })
+  }
 
   return {
-    design: starterDesign,
-    problems: validateArchitecture(starterDesign.architecture),
+    ...freshRun(starterDesign),
     selection: null,
     loadCount: 0,
-    ...freshRun(starterDesign),
+    speed: 1,
 
     loadDesign(design) {
-      editArchitecture(() => design, null)
-      set({ loadCount: get().loadCount + 1 })
+      set({ ...freshRun(design), selection: null, loadCount: get().loadCount + 1 })
     },
 
     addComponent(kind, position) {
-      const { design, id } = edits.addComponent(get().design, kind, position)
-      editArchitecture(() => design, { kind: 'component', id })
+      const { design, id, spec } = edits.addComponent(get().design, kind, position, get().knownIds)
+      editArchitecture(design, [{ kind: 'addComponent', component: spec }], { kind: 'component', id })
     },
 
     removeComponent(id) {
       const selection = get().selection
       const wasSelected = selection?.kind === 'component' && selection.id === id
-      editArchitecture((design) => edits.removeComponent(design, id), wasSelected ? null : undefined)
+      editArchitecture(
+        edits.removeComponent(get().design, id),
+        [{ kind: 'removeComponent', componentId: id }],
+        wasSelected ? null : undefined,
+      )
     },
 
     moveComponent(id, position) {
@@ -151,55 +242,90 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     },
 
     updateSetting(id, key, value) {
-      editArchitecture((design) => edits.updateSetting(design, id, key, value))
+      editArchitecture(edits.updateSetting(get().design, id, key, value), [
+        { kind: 'setSetting', componentId: id, key: key as SettingKey, value },
+      ])
     },
 
     addConnection(from, to) {
-      editArchitecture((design) => edits.addConnection(design, from, to))
+      editArchitecture(edits.addConnection(get().design, from, to), [{ kind: 'addConnection', from, to }])
     },
 
     removeConnection(from, to) {
       const selection = get().selection
       const wasSelected = selection?.kind === 'connection' && selection.from === from && selection.to === to
-      editArchitecture((design) => edits.removeConnection(design, from, to), wasSelected ? null : undefined)
+      editArchitecture(
+        edits.removeConnection(get().design, from, to),
+        [{ kind: 'removeConnection', from, to }],
+        wasSelected ? null : undefined,
+      )
     },
 
     select(selection) {
       set({ selection })
     },
 
+    dismissNotice() {
+      set({ notice: null })
+    },
+
     togglePlaying() {
-      const { playing, problems } = get()
-      if (!playing && problems.length > 0) return
-      set({ playing: !playing })
+      const state = get()
+      if (!state.playing && playBlocked(state)) return
+      set({ playing: !state.playing, behind: false })
+    },
+
+    setSpeed(speed) {
+      set({ speed })
+    },
+
+    reset() {
+      const { startDesign, design, selection, loadCount } = get()
+      // Keep current positions and names for Components that exist at time zero.
+      const layout = { ...startDesign.layout }
+      for (const id of Object.keys(layout)) {
+        if (design.layout[id]) layout[id] = design.layout[id]
+      }
+      const stillThere =
+        selection?.kind === 'component'
+          ? startDesign.architecture.components.some((c) => c.id === selection.id)
+          : selection?.kind === 'connection'
+            ? startDesign.architecture.connections.some((c) => c.from === selection.from && c.to === selection.to)
+            : true
+      set({ ...freshRun({ ...startDesign, layout }), selection: stillThere ? selection : null, loadCount })
     },
 
     applyIntervention(intervention) {
-      const { engine } = get()
-      engine.applyIntervention(intervention)
-      set({ snapshot: engine.snapshot() })
+      const { engine, interventions } = get()
+      try {
+        engine.applyIntervention(intervention)
+      } catch (error) {
+        set({ notice: `Not applied: ${error instanceof Error ? error.message : String(error)}` })
+        return
+      }
+      set({ snapshot: engine.snapshot(), interventions: [...interventions, { time: engine.time, intervention }] })
     },
 
     tick(realSeconds) {
-      const { engine, playing, dots, snapshot: previous, recentUtilisation } = get()
+      const { engine, playing, speed, dots, snapshot: previous, recentUtilisation } = get()
       if (!playing) return
-      engine.advanceTo(engine.time + Math.min(realSeconds, MAX_FRAME_SECONDS))
+      const target = engine.time + Math.min(realSeconds, MAX_FRAME_SECONDS) * speed
+
+      // Advance in small chunks until caught up or out of budget; if out of budget the Run
+      // simply falls behind the clock rather than freezing the page.
+      const started = performance.now()
+      while (engine.time < target && performance.now() - started < FRAME_BUDGET_MS) {
+        engine.advanceTo(Math.min(target, engine.time + BUDGET_CHUNK))
+      }
+      const behind = engine.time < target
 
       const now = engine.time
       const live = dots.filter((dot) => now - dot.startedAt < DOT_TRAVEL_TIME)
-      for (const movement of engine.takeMovements()) {
-        live.push({
-          key: `${movement.requestId}:${movement.direction}:${movement.from}`,
-          from: movement.from,
-          to: movement.to,
-          direction: movement.direction,
-          bad: movement.direction === 'response' && (movement.outcome === 'rejected' || movement.outcome === 'failed'),
-          startedAt: movement.time,
-        })
-      }
+      for (const movement of engine.takeMovements()) live.push(toDot(movement))
       const snapshot = engine.snapshot()
       set({
         snapshot,
+        behind,
         dots: live.slice(-MAX_DOTS),
         recentUtilisation: smoothUtilisation(previous, snapshot, recentUtilisation),
       })

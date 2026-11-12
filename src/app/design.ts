@@ -79,8 +79,9 @@ export function toScenario(design: Design): Scenario {
   return { seed: design.seed, architecture: design.architecture }
 }
 
-function nextId(design: Design, kind: ComponentKind): ComponentId {
-  const taken = new Set(design.architecture.components.map((c) => c.id))
+/** The first `kind-n` id not used by the design or listed in `alsoTaken` (ids retired earlier in a Run). */
+function nextId(design: Design, kind: ComponentKind, alsoTaken: ReadonlySet<ComponentId>): ComponentId {
+  const taken = new Set([...design.architecture.components.map((c) => c.id), ...alsoTaken])
   for (let n = 1; ; n++) {
     const id = `${kind}-${n}`
     if (!taken.has(id)) return id
@@ -92,14 +93,20 @@ function nextLabel(design: Design, kind: ComponentKind): string {
   return `${kindLabel[kind]} ${count + 1}`
 }
 
-export function addComponent(design: Design, kind: ComponentKind, position: { x: number; y: number }) {
-  const id = nextId(design, kind)
+export function addComponent(
+  design: Design,
+  kind: ComponentKind,
+  position: { x: number; y: number },
+  alsoTaken: ReadonlySet<ComponentId> = new Set(),
+) {
+  const id = nextId(design, kind, alsoTaken)
+  const spec = defaultSpec(kind, id)
   const next: Design = {
     ...design,
-    architecture: { ...design.architecture, components: [...design.architecture.components, defaultSpec(kind, id)] },
+    architecture: { ...design.architecture, components: [...design.architecture.components, spec] },
     layout: { ...design.layout, [id]: { ...position, label: nextLabel(design, kind) } },
   }
-  return { design: next, id }
+  return { design: next, id, spec }
 }
 
 export function removeComponent(design: Design, id: ComponentId): Design {

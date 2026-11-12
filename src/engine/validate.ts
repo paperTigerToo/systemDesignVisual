@@ -21,6 +21,19 @@ export interface Problem {
   connection?: ConnectionSpec
 }
 
+/**
+ * Problems that only mean the architecture is unfinished: something is not
+ * connected yet. Mid-Run these are harmless (an unconnected Component simply
+ * sits idle), so an edit that causes them can still be applied live, which is
+ * what lets someone add a Server and then connect it while traffic flows.
+ * Every other problem is a hazard the engine cannot run safely.
+ */
+const incompleteCodes = new Set<Problem['code']>(['no-source', 'source-no-outgoing', 'queue-no-outgoing', 'unreachable'])
+
+export function isHazard(problem: Problem): boolean {
+  return !incompleteCodes.has(problem.code)
+}
+
 const isWhole = (n: number) => Number.isInteger(n)
 
 /** Settings that would make the engine misbehave, such as a Concurrency of zero. */

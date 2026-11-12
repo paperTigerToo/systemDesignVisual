@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateArchitecture, type Architecture, type ComponentSpec, type Problem } from './index'
+import { isHazard, validateArchitecture, type Architecture, type ComponentSpec, type Problem } from './index'
 
 const source = (id = 'source'): ComponentSpec => ({ kind: 'source', id, rate: 5, timeLimit: 2 })
 const server = (id: string): ComponentSpec => ({ kind: 'server', id, concurrency: 2, workTime: 0.1, backlogCapacity: 10 })
@@ -113,6 +113,13 @@ describe('validateArchitecture', () => {
   it('refuses Connections to missing Components and duplicate ids', () => {
     expect(codes({ ...valid, connections: [...valid.connections, link('web', 'ghost')] })).toContain('unknown-component')
     expect(codes({ ...valid, components: [...valid.components, server('web')] })).toContain('duplicate-id')
+  })
+
+  it('separates hazards from problems that only mean something is unconnected', () => {
+    const unfinished = validateArchitecture({ ...valid, components: [...valid.components, server('lonely')] })
+    expect(unfinished.some(isHazard)).toBe(false)
+    const loop = validateArchitecture({ ...valid, connections: [...valid.connections, link('web', 'source')] })
+    expect(loop.some(isHazard)).toBe(true)
   })
 
   it('refuses settings the engine cannot run', () => {
