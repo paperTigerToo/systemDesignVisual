@@ -13,9 +13,9 @@ function sourceServerDatabase({ seed = 1, rate, server, database }: Numbers): Sc
     seed,
     architecture: {
       components: [
-        { kind: 'source', id: 'source', rate },
-        { kind: 'server', id: 'server', ...server },
-        { kind: 'database', id: 'database', ...database },
+        { kind: 'source', id: 'source', rate, timeLimit: Infinity },
+        { kind: 'server', id: 'server', backlogCapacity: Infinity, ...server },
+        { kind: 'database', id: 'database', backlogCapacity: Infinity, ...database },
       ],
       connections: [
         { from: 'source', to: 'server' },
@@ -68,7 +68,7 @@ describe('call-and-wait', () => {
     const engine = createEngine(scenario)
     const movements: Movement[] = []
     let t = 0
-    while (parts(engine.snapshot()).source.completed === 0) {
+    while (parts(engine.snapshot()).source.outcomes.completed === 0) {
       t += 0.05
       engine.advanceTo(t)
       movements.push(...engine.takeMovements())
@@ -104,8 +104,8 @@ describe('call-and-wait', () => {
     engine.advanceTo(60)
     const { source, server, database } = parts(engine.snapshot())
     // Every Request in the Database is also holding a Server slot.
-    expect(source.created).toBe(source.completed + server.occupied + server.backlog)
-    expect(server.completed).toBe(source.completed)
+    expect(source.created).toBe(source.outcomes.completed + server.occupied + server.backlog)
+    expect(server.completed).toBe(source.outcomes.completed)
     expect(database.completed).toBeGreaterThanOrEqual(server.completed)
     expect(database.occupied).toBeLessThanOrEqual(server.waitingOnCall)
   })

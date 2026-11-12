@@ -14,14 +14,24 @@ export interface Dot {
   from: ComponentId
   to: ComponentId
   direction: Movement['direction']
+  /** True for a response carrying a Rejected Outcome. */
+  rejected: boolean
   startedAt: number
 }
+
+/** Time constant, in simulated seconds, of the smoothing applied to Utilisation for status colours. */
+const UTILISATION_SMOOTHING = 1
 
 interface SimulationState {
   engine: Engine
   playing: boolean
   snapshot: Snapshot
   dots: Dot[]
+  /**
+   * Per Server and Database: Utilisation averaged over roughly the last
+   * second of simulated time, so status colours do not flicker.
+   */
+  recentUtilisation: Record<ComponentId, number>
   togglePlaying(): void
   /** Advance the Run by `realSeconds` of wall-clock time at 1x speed. */
   tick(realSeconds: number): void
@@ -29,7 +39,23 @@ interface SimulationState {
 
 function freshEngine(scenario: Scenario) {
   const engine = createEngine(scenario, { movementCap: MAX_DOTS })
-  return { engine, snapshot: engine.snapshot(), dots: [] as Dot[] }
+  return { engine, snapshot: engine.snapshot(), dots: [] as Dot[], recentUtilisation: {} }
+}
+
+/** Blend each worker's average Utilisation over the last frame into its smoothed value. */
+function smoothUtilisation(previous: Snapshot, next: Snapshot, smoothed: Record<ComponentId, number>) {
+  const elapsed = next.time - previous.time
+  if (elapsed <= 0) return smoothed
+  const weight = 1 - Math.exp(-elapsed / UTILISATION_SMOOTHING)
+  const result: Record<ComponentId, number> = {}
+  for (const [id, component] of Object.entries(next.components)) {
+    const before = previous.components[id]
+    if (component.kind === 'source' || before?.kind !== component.kind) continue
+    const frameAverage = (component.occupiedTime - before.occupiedTime) / (elapsed * component.concurrency)
+    const prior = smoothed[id] ?? frameAverage
+    result[id] = prior + weight * (frameAverage - prior)
+  }
+  return result
 }
 
 export const useSimulation = create<SimulationState>()((set, get) => ({
@@ -41,7 +67,7 @@ export const useSimulation = create<SimulationState>()((set, get) => ({
   },
 
   tick(realSeconds) {
-    const { engine, playing, dots } = get()
+    const { engine, playing, dots, snapshot: previous, recentUtilisation } = get()
     if (!playing) return
     engine.advanceTo(engine.time + Math.min(realSeconds, MAX_FRAME_SECONDS))
 
@@ -53,9 +79,15 @@ export const useSimulation = create<SimulationState>()((set, get) => ({
         from: movement.from,
         to: movement.to,
         direction: movement.direction,
+        rejected: movement.direction === 'response' && movement.outcome === 'rejected',
         startedAt: movement.time,
       })
     }
-    set({ snapshot: engine.snapshot(), dots: live.slice(-MAX_DOTS) })
+    const snapshot = engine.snapshot()
+    set({
+      snapshot,
+      dots: live.slice(-MAX_DOTS),
+      recentUtilisation: smoothUtilisation(previous, snapshot, recentUtilisation),
+    })
   },
 }))

@@ -7,6 +7,9 @@
   --accent: #4fb3ff;
   --dot: #7fd1ff;
   --response-dot: #b9e986;
+  --healthy: #3ecf8e;
+  --busy: #f5b544;
+  --overloaded: #ff5d5d;
   color-scheme: dark;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
@@ -76,6 +79,81 @@ body,
   border-radius: 8px;
   background: var(--panel);
   color: var(--text);
+  transition:
+    border-color 400ms ease,
+    box-shadow 400ms ease;
+}
+
+.component--healthy {
+  border-color: rgb(62 207 142 / 0.55);
+}
+
+.component--busy {
+  border-color: var(--busy);
+}
+
+.component--overloaded {
+  border-color: var(--overloaded);
+  box-shadow: 0 0 0 1px var(--overloaded), 0 0 18px rgb(255 93 93 / 0.35);
+}
+
+.component__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status--healthy {
+  color: var(--healthy);
+}
+
+.status--busy {
+  color: var(--busy);
+}
+
+.status--overloaded {
+  color: var(--overloaded);
+}
+
+.outcome--rejected,
+.outcome--timed-out {
+  color: var(--busy) !important;
+}
+
+.backlog {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.backlog__label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.backlog__track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.backlog__fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 150ms linear;
+}
+
+.component--overloaded .backlog__fill {
+  background: var(--overloaded);
 }
 
 .component__kind {
@@ -119,6 +197,10 @@ body,
 
 .request-dot--response {
   fill: var(--response-dot);
+}
+
+.request-dot--rejected {
+  fill: var(--overloaded);
 }
 
 /* Pin handles near the top so Connections stay level whatever a node's height. */

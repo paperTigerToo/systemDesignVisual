@@ -1,6 +1,6 @@
 # 03: Backlog capacity, Outcomes and Component status visuals
 
-Status: open
+Status: resolved
 Type: task
 Blocked by: 02
 
@@ -36,3 +36,13 @@ Failed Outcome and Kill (ticket 04), charts (ticket 08), final visual design (ti
 Overloaded numbers: the Database turns red, its bar fills, then the Server turns red, and the Source's Rejected and Timed out counts rise.
 
 ## Comments
+
+**2026-11-12, resolved.** Notes for later tickets:
+
+- Specs: `SourceSpec.timeLimit` (seconds; `Infinity` means none) and `backlogCapacity` on Server and Database are now required fields.
+- `SourceSnapshot` is now `{ created, inProgress, outcomes: { completed, rejected, timedOut }, averageLatency }`. `averageLatency` counts Completed Requests only. Ticket 04 adds `failed` to `Outcome` and to `outcomes`.
+- `WorkerSnapshot` gained `utilisation` (right now), `occupiedTime` (total slot-seconds since the Run began), `backlogCapacity`, `rejected` and `lastRejectedAt`.
+- Response movements carry `outcome: 'completed' | 'rejected'`; Rejected responses are drawn as red dots.
+- A Server passes a downstream Outcome back up unchanged. Its `completed` counts only Completed responses, including late ones whose Request had already Timed out at the Source (wasted work).
+- **Status colours use smoothed Utilisation, not the instantaneous value.** The instantaneous value made a Component at 80% load flicker between Healthy and Overloaded every few frames. The store (`recentUtilisation` in `src/app/simulationStore.ts`) derives a roughly 1-second exponential average from `occupiedTime`. Thresholds: Busy at 70% or more; Overloaded at 95% or more, or after any Rejection in the last simulated second. Ticket 08 can reuse `occupiedTime` for its Utilisation chart.
+- **Correction to this ticket's "See it working" text.** It said the Database's bar fills first. Under call-and-wait that cannot happen when the Server's Concurrency is small: the Server can have at most its Concurrency in calls outstanding, so the Database's Backlog stays tiny and the pile-up, and the Rejections, happen in the **Server's** Backlog. Checked in the browser at Rate 20: both Components show Overloaded; Server 4/4 slots, Backlog 40/40, 67 Rejected; Database 2/2, Backlog 2/20. The Source showed 13 Completed, 67 Rejected and 83 Timed out at t = 8 s. This is the headline lesson, so it is worth keeping.

@@ -28,7 +28,8 @@ export function ConnectionEdge({ id, source, target, sourceX, sourceY, targetX, 
         const x = sourceX + (targetX - sourceX) * progress
         // Responses ride slightly below the line so the two directions stay readable.
         const y = sourceY + (targetY - sourceY) * progress + (dot.direction === 'response' ? 6 : -6)
-        return <circle key={dot.key} className={`request-dot request-dot--${dot.direction}`} r={3.5} cx={x} cy={y} />
+        const className = `request-dot request-dot--${dot.direction}${dot.rejected ? ' request-dot--rejected' : ''}`
+        return <circle key={dot.key} className={className} r={3.5} cx={x} cy={y} />
       })}
     </>
   )

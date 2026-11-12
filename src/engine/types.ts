@@ -7,24 +7,27 @@ export interface SourceSpec {
   id: ComponentId
   /** Requests per second, randomly spaced. */
   rate: number
+  /** Seconds a Request may take before its Outcome is Timed out. */
+  timeLimit: number
 }
 
-export interface ServerSpec {
-  kind: 'server'
-  id: ComponentId
+interface WorkerSettings {
   /** Requests it can work on (or hold while waiting on a downstream call) at the same time. */
   concurrency: number
   /** Mean Work time in seconds; each Request's Work time is exponentially distributed around it. */
   workTime: number
+  /** Most Requests that may wait in the Backlog; any more are Rejected. */
+  backlogCapacity: number
 }
 
-export interface DatabaseSpec {
+export interface ServerSpec extends WorkerSettings {
+  kind: 'server'
+  id: ComponentId
+}
+
+export interface DatabaseSpec extends WorkerSettings {
   kind: 'database'
   id: ComponentId
-  /** Requests it can work on at the same time. */
-  concurrency: number
-  /** Mean Work time in seconds; each Request's Work time is exponentially distributed around it. */
-  workTime: number
 }
 
 export type ComponentSpec = SourceSpec | ServerSpec | DatabaseSpec
@@ -48,11 +51,16 @@ export interface Scenario {
   architecture: Architecture
 }
 
+/** How a Request ended. Failed arrives with Kill in ticket 04. */
+export type Outcome = 'completed' | 'rejected' | 'timedOut'
+
 export interface SourceSnapshot {
   kind: 'source'
   created: number
-  completed: number
-  /** Mean latency in seconds (creation to response) of completed Requests, or null before the first. */
+  /** Requests created that have no Outcome yet. */
+  inProgress: number
+  outcomes: Record<Outcome, number>
+  /** Mean latency in seconds (creation to response) of Completed Requests, or null before the first. */
   averageLatency: number | null
 }
 
@@ -67,10 +75,23 @@ export interface WorkerSnapshot {
   /** Of the occupied slots, how many are held waiting on a downstream call. */
   waitingOnCall: number
   concurrency: number
+  /** occupied / concurrency, right now. */
+  utilisation: number
+  /**
+   * Total slot-seconds occupied since the Run began. The change between two
+   * snapshots, divided by elapsed time and Concurrency, is the average
+   * Utilisation over that interval.
+   */
+  occupiedTime: number
   /** Requests waiting in the Backlog. */
   backlog: number
-  /** Requests this Component has responded to. */
+  backlogCapacity: number
+  /** Requests this Component responded to with Completed. */
   completed: number
+  /** Requests this Component turned away because its Backlog was full. */
+  rejected: number
+  /** Simulated time this Component last Rejected a Request, or null if it never has. */
+  lastRejectedAt: number | null
 }
 
 export type ComponentSnapshot = SourceSnapshot | WorkerSnapshot
@@ -83,13 +104,16 @@ export interface Snapshot {
 
 /**
  * One Request travelling along a Connection at a simulated time: a call goes
- * from caller to callee, a response comes back from callee to caller. Travel
- * takes zero simulated time; the UI animates it purely for show.
+ * from caller to callee, a response comes back from callee to caller carrying
+ * its Outcome. Travel takes zero simulated time; the UI animates it purely for show.
  */
-export interface Movement {
-  requestId: number
-  from: ComponentId
-  to: ComponentId
-  time: number
-  direction: 'call' | 'response'
-}
+export type Movement =
+  | { direction: 'call'; requestId: number; from: ComponentId; to: ComponentId; time: number }
+  | {
+      direction: 'response'
+      requestId: number
+      from: ComponentId
+      to: ComponentId
+      time: number
+      outcome: 'completed' | 'rejected'
+    }

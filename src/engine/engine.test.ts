@@ -6,8 +6,8 @@ function sourceToServer(options: { seed?: number; rate: number; concurrency: num
     seed: options.seed ?? 1,
     architecture: {
       components: [
-        { kind: 'source', id: 'source', rate: options.rate },
-        { kind: 'server', id: 'server', concurrency: options.concurrency, workTime: options.workTime },
+        { kind: 'source', id: 'source', rate: options.rate, timeLimit: Infinity },
+        { kind: 'server', id: 'server', concurrency: options.concurrency, workTime: options.workTime, backlogCapacity: Infinity },
       ],
       connections: [{ from: 'source', to: 'server' }],
     },
@@ -85,7 +85,7 @@ describe('Source and Server', () => {
     const { source, server } = engine.snapshot().components
     if (source?.kind !== 'source' || server?.kind !== 'server') throw new Error('unexpected shape')
     expect(source.created).toBe(server.completed + server.occupied + server.backlog)
-    expect(source.completed).toBe(server.completed)
+    expect(source.outcomes.completed).toBe(server.completed)
   })
 
   it('records a movement for each Request sent, up to the cap', () => {

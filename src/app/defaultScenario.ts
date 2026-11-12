@@ -11,9 +11,9 @@ export const defaultScenario: Scenario = {
   seed: 1,
   architecture: {
     components: [
-      { kind: 'source', id: 'source', rate: 8 },
-      { kind: 'server', id: 'server', concurrency: 4, workTime: 0.02 },
-      { kind: 'database', id: 'database', concurrency: 2, workTime: 0.2 },
+      { kind: 'source', id: 'source', rate: 8, timeLimit: 2 },
+      { kind: 'server', id: 'server', concurrency: 4, workTime: 0.02, backlogCapacity: 40 },
+      { kind: 'database', id: 'database', concurrency: 2, workTime: 0.2, backlogCapacity: 20 },
     ],
     connections: [
       { from: 'source', to: 'server' },

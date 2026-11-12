@@ -5,6 +5,7 @@ import type {
   ComponentSnapshot,
   DatabaseSpec,
   Movement,
+  Outcome,
   Scenario,
   ServerSpec,
   Snapshot,
@@ -35,10 +36,15 @@ export interface EngineOptions {
   movementCap?: number
 }
 
+/** The Outcomes a Component can respond with. Timed out is decided by the Source alone. */
+type ResponseOutcome = 'completed' | 'rejected'
+
 interface Request {
   id: number
   sourceId: ComponentId
   createdAt: number
+  /** True once the Source has recorded an Outcome; later responses are ignored. */
+  finished: boolean
 }
 
 /**
@@ -56,7 +62,8 @@ interface SourceState {
   spec: SourceSpec
   target: ComponentId | undefined
   created: number
-  completed: number
+  outcomes: Record<Outcome, number>
+  /** Sum of latencies of Completed Requests. */
   latencySum: number
 }
 
@@ -66,15 +73,21 @@ interface WorkerState {
   /** Where this Component calls after its own work; always undefined for a Database. */
   downstream: ComponentId | undefined
   occupied: number
+  /** Slot-seconds occupied up to `occupiedSince`. */
+  occupiedTime: number
+  occupiedSince: number
   waitingOnCall: number
   backlog: Call[]
   backlogHead: number
   completed: number
+  rejected: number
+  lastRejectedAt: number | null
 }
 
 type Event =
   | { kind: 'generate'; sourceId: ComponentId }
   | { kind: 'workDone'; workerId: ComponentId; call: Call }
+  | { kind: 'timeLimit'; request: Request }
 
 export function createEngine(scenario: Scenario, options: EngineOptions = {}): Engine {
   const movementCap = options.movementCap ?? 1000
@@ -92,16 +105,26 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   for (const spec of scenario.architecture.components) {
     order.push(spec.id)
     if (spec.kind === 'source') {
-      sources.set(spec.id, { spec, target: firstTarget(spec.id), created: 0, completed: 0, latencySum: 0 })
+      sources.set(spec.id, {
+        spec,
+        target: firstTarget(spec.id),
+        created: 0,
+        outcomes: { completed: 0, rejected: 0, timedOut: 0 },
+        latencySum: 0,
+      })
     } else {
       workers.set(spec.id, {
         spec,
         downstream: spec.kind === 'server' ? firstTarget(spec.id) : undefined,
         occupied: 0,
+        occupiedTime: 0,
+        occupiedSince: 0,
         waitingOnCall: 0,
         backlog: [],
         backlogHead: 0,
         completed: 0,
+        rejected: 0,
+        lastRejectedAt: null,
       })
     }
   }
@@ -117,9 +140,8 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     heap.push(now + random.exponential(1 / source.spec.rate), { kind: 'generate', sourceId: source.spec.id })
   }
 
-  function recordMovement(request: Request, from: ComponentId, to: ComponentId, direction: Movement['direction']): void {
-    if (movements.length >= movementCap) return
-    movements.push({ requestId: request.id, from, to, time: now, direction })
+  function recordMovement(movement: Movement): void {
+    if (movements.length < movementCap) movements.push(movement)
   }
 
   function backlogLength(worker: WorkerState): number {
@@ -138,50 +160,80 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     return call
   }
 
+  /** Bring the occupied slot-seconds up to now; call before every change to `occupied`. */
+  function accrueOccupiedTime(worker: WorkerState): void {
+    worker.occupiedTime += worker.occupied * (now - worker.occupiedSince)
+    worker.occupiedSince = now
+  }
+
   function startWork(worker: WorkerState, call: Call): void {
+    accrueOccupiedTime(worker)
     worker.occupied++
     heap.push(now + random.exponential(worker.spec.workTime), { kind: 'workDone', workerId: worker.spec.id, call })
   }
 
-  /** Send `request` from `caller` to `target`. */
+  /** Send `request` from `caller` to `target`: start work, wait in the Backlog, or be Rejected. */
   function sendCall(caller: ComponentId, target: ComponentId, request: Request, parent: Call | undefined): void {
     const worker = workers.get(target)
     if (!worker) return
-    recordMovement(request, caller, target, 'call')
+    recordMovement({ direction: 'call', requestId: request.id, from: caller, to: target, time: now })
     const call: Call = { request, caller, parent }
-    if (worker.occupied < worker.spec.concurrency) startWork(worker, call)
-    else worker.backlog.push(call)
+    if (worker.occupied < worker.spec.concurrency) {
+      startWork(worker, call)
+    } else if (backlogLength(worker) < worker.spec.backlogCapacity) {
+      worker.backlog.push(call)
+    } else {
+      worker.rejected++
+      worker.lastRejectedAt = now
+      respond(worker.spec.id, call, 'rejected')
+    }
   }
 
   /** Free one of the worker's slots and start the next Request in its Backlog. */
   function releaseSlot(worker: WorkerState): void {
+    accrueOccupiedTime(worker)
     worker.occupied--
     const next = takeFromBacklog(worker)
     if (next) startWork(worker, next)
   }
 
-  /** `responder` has finished `call`; deliver the response to the caller. */
-  function respond(responder: ComponentId, call: Call): void {
-    recordMovement(call.request, responder, call.caller, 'response')
+  /** `responder` has finished with `call`; deliver the Outcome to the caller. */
+  function respond(responder: ComponentId, call: Call, outcome: ResponseOutcome): void {
+    recordMovement({
+      direction: 'response',
+      requestId: call.request.id,
+      from: responder,
+      to: call.caller,
+      time: now,
+      outcome,
+    })
     const source = sources.get(call.caller)
     if (source) {
-      source.completed++
-      source.latencySum += now - call.request.createdAt
+      const request = call.request
+      // A response after the time limit is wasted work: the Outcome is already Timed out.
+      if (request.finished) return
+      request.finished = true
+      source.outcomes[outcome]++
+      if (outcome === 'completed') source.latencySum += now - request.createdAt
       return
     }
+    // The caller is a Server waiting on this call: pass the Outcome back up.
     const caller = workers.get(call.caller)!
     caller.waitingOnCall--
-    caller.completed++
+    if (outcome === 'completed') caller.completed++
     releaseSlot(caller)
-    respond(caller.spec.id, call.parent!)
+    respond(caller.spec.id, call.parent!, outcome)
   }
 
   function handle(event: Event): void {
     switch (event.kind) {
       case 'generate': {
         const source = sources.get(event.sourceId)!
-        const request: Request = { id: nextRequestId++, sourceId: source.spec.id, createdAt: now }
+        const request: Request = { id: nextRequestId++, sourceId: source.spec.id, createdAt: now, finished: false }
         source.created++
+        if (Number.isFinite(source.spec.timeLimit)) {
+          heap.push(now + source.spec.timeLimit, { kind: 'timeLimit', request })
+        }
         if (source.target !== undefined) sendCall(source.spec.id, source.target, request, undefined)
         scheduleNextRequest(source)
         return
@@ -196,7 +248,14 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         }
         worker.completed++
         releaseSlot(worker)
-        respond(worker.spec.id, event.call)
+        respond(worker.spec.id, event.call, 'completed')
+        return
+      }
+      case 'timeLimit': {
+        const request = event.request
+        if (request.finished) return
+        request.finished = true
+        sources.get(request.sourceId)!.outcomes.timedOut++
         return
       }
     }
@@ -223,11 +282,13 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
       for (const id of order) {
         const source = sources.get(id)
         if (source) {
+          const { completed, rejected, timedOut } = source.outcomes
           components[id] = {
             kind: 'source',
             created: source.created,
-            completed: source.completed,
-            averageLatency: source.completed === 0 ? null : source.latencySum / source.completed,
+            inProgress: source.created - completed - rejected - timedOut,
+            outcomes: { ...source.outcomes },
+            averageLatency: completed === 0 ? null : source.latencySum / completed,
           }
           continue
         }
@@ -237,8 +298,13 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
           occupied: worker.occupied,
           waitingOnCall: worker.waitingOnCall,
           concurrency: worker.spec.concurrency,
+          utilisation: worker.occupied / worker.spec.concurrency,
+          occupiedTime: worker.occupiedTime + worker.occupied * (now - worker.occupiedSince),
           backlog: backlogLength(worker),
+          backlogCapacity: worker.spec.backlogCapacity,
           completed: worker.completed,
+          rejected: worker.rejected,
+          lastRejectedAt: worker.lastRejectedAt,
         }
       }
       return { time: now, components }
