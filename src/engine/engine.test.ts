@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createEngine, type Scenario, type ServerSnapshot } from './index'
+import { createEngine, type Scenario, type WorkerSnapshot } from './index'
 
 function sourceToServer(options: { seed?: number; rate: number; concurrency: number; workTime: number }): Scenario {
   return {
@@ -14,7 +14,7 @@ function sourceToServer(options: { seed?: number; rate: number; concurrency: num
   }
 }
 
-function serverAt(scenario: Scenario, t: number): ServerSnapshot {
+function serverAt(scenario: Scenario, t: number): WorkerSnapshot {
   const engine = createEngine(scenario)
   engine.advanceTo(t)
   const server = engine.snapshot().components.server
@@ -74,8 +74,8 @@ describe('Source and Server', () => {
     const engine = createEngine(sourceToServer({ rate: 50, concurrency: 3, workTime: 0.2 }))
     for (let t = 0; t < 20; t += 0.05) {
       engine.advanceTo(t)
-      const server = engine.snapshot().components.server as ServerSnapshot
-      expect(server.inProgress).toBeLessThanOrEqual(3)
+      const server = engine.snapshot().components.server as WorkerSnapshot
+      expect(server.occupied).toBeLessThanOrEqual(3)
     }
   })
 
@@ -84,7 +84,7 @@ describe('Source and Server', () => {
     engine.advanceTo(50)
     const { source, server } = engine.snapshot().components
     if (source?.kind !== 'source' || server?.kind !== 'server') throw new Error('unexpected shape')
-    expect(source.created).toBe(server.completed + server.inProgress + server.backlog)
+    expect(source.created).toBe(server.completed + server.occupied + server.backlog)
     expect(source.completed).toBe(server.completed)
   })
 

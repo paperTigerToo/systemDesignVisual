@@ -1,18 +1,21 @@
 import { Background, ReactFlow, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { defaultPositions, defaultScenario } from './defaultScenario'
+import { defaultLayout, defaultScenario } from './defaultScenario'
 import { edgeTypes } from './ConnectionEdge'
 import { nodeTypes, type ComponentNode } from './nodes'
 import { useSimulation } from './simulationStore'
 import { usePlaybackLoop } from './usePlaybackLoop'
 import './styles.css'
 
-const nodes: ComponentNode[] = defaultScenario.architecture.components.map((component) => ({
-  id: component.id,
-  type: component.kind,
-  position: defaultPositions[component.id] ?? { x: 0, y: 0 },
-  data: { label: component.kind === 'source' ? 'Traffic' : 'Web server' },
-}))
+const nodes: ComponentNode[] = defaultScenario.architecture.components.map((component) => {
+  const layout = defaultLayout[component.id]
+  return {
+    id: component.id,
+    type: component.kind,
+    position: { x: layout?.x ?? 0, y: layout?.y ?? 0 },
+    data: { label: layout?.label ?? component.id },
+  }
+})
 
 const edges: Edge[] = defaultScenario.architecture.connections.map((connection) => ({
   id: `${connection.from}->${connection.to}`,

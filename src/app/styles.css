@@ -6,6 +6,7 @@
   --muted: #8a94a3;
   --accent: #4fb3ff;
   --dot: #7fd1ff;
+  --response-dot: #b9e986;
   color-scheme: dark;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
@@ -112,8 +113,12 @@ body,
   stroke-width: 2 !important;
 }
 
-.request-dot {
+.request-dot--call {
   fill: var(--dot);
+}
+
+.request-dot--response {
+  fill: var(--response-dot);
 }
 
 /* Pin handles near the top so Connections stay level whatever a node's height. */

@@ -12,13 +12,22 @@ export interface SourceSpec {
 export interface ServerSpec {
   kind: 'server'
   id: ComponentId
+  /** Requests it can work on (or hold while waiting on a downstream call) at the same time. */
+  concurrency: number
+  /** Mean Work time in seconds; each Request's Work time is exponentially distributed around it. */
+  workTime: number
+}
+
+export interface DatabaseSpec {
+  kind: 'database'
+  id: ComponentId
   /** Requests it can work on at the same time. */
   concurrency: number
   /** Mean Work time in seconds; each Request's Work time is exponentially distributed around it. */
   workTime: number
 }
 
-export type ComponentSpec = SourceSpec | ServerSpec
+export type ComponentSpec = SourceSpec | ServerSpec | DatabaseSpec
 
 export interface ConnectionSpec {
   from: ComponentId
@@ -43,19 +52,28 @@ export interface SourceSnapshot {
   kind: 'source'
   created: number
   completed: number
+  /** Mean latency in seconds (creation to response) of completed Requests, or null before the first. */
+  averageLatency: number | null
 }
 
-export interface ServerSnapshot {
-  kind: 'server'
-  /** Requests currently being worked on. */
-  inProgress: number
+/** State of a Server or Database. */
+export interface WorkerSnapshot {
+  kind: 'server' | 'database'
+  /**
+   * Concurrency slots in use: Requests being worked on plus Requests held
+   * while waiting on a downstream call.
+   */
+  occupied: number
+  /** Of the occupied slots, how many are held waiting on a downstream call. */
+  waitingOnCall: number
   concurrency: number
   /** Requests waiting in the Backlog. */
   backlog: number
+  /** Requests this Component has responded to. */
   completed: number
 }
 
-export type ComponentSnapshot = SourceSnapshot | ServerSnapshot
+export type ComponentSnapshot = SourceSnapshot | WorkerSnapshot
 
 export interface Snapshot {
   /** Simulated time in seconds. */
@@ -64,13 +82,14 @@ export interface Snapshot {
 }
 
 /**
- * One Request travelling along a Connection at a simulated time. Travel takes
- * zero simulated time; the UI animates it purely for show.
+ * One Request travelling along a Connection at a simulated time: a call goes
+ * from caller to callee, a response comes back from callee to caller. Travel
+ * takes zero simulated time; the UI animates it purely for show.
  */
 export interface Movement {
   requestId: number
   from: ComponentId
   to: ComponentId
   time: number
-  direction: 'call'
+  direction: 'call' | 'response'
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { createEngine, type ComponentId, type Engine, type Scenario, type Snapshot } from '../engine'
+import { createEngine, type ComponentId, type Engine, type Movement, type Scenario, type Snapshot } from '../engine'
 import { defaultScenario } from './defaultScenario'
 
 /** How long, in simulated seconds, a dot takes to cross a Connection. Purely cosmetic. */
@@ -10,9 +10,10 @@ const MAX_DOTS = 150
 const MAX_FRAME_SECONDS = 0.1
 
 export interface Dot {
-  key: number
+  key: string
   from: ComponentId
   to: ComponentId
+  direction: Movement['direction']
   startedAt: number
 }
 
@@ -47,7 +48,13 @@ export const useSimulation = create<SimulationState>()((set, get) => ({
     const now = engine.time
     const live = dots.filter((dot) => now - dot.startedAt < DOT_TRAVEL_TIME)
     for (const movement of engine.takeMovements()) {
-      live.push({ key: movement.requestId, from: movement.from, to: movement.to, startedAt: movement.time })
+      live.push({
+        key: `${movement.requestId}:${movement.direction}:${movement.from}`,
+        from: movement.from,
+        to: movement.to,
+        direction: movement.direction,
+        startedAt: movement.time,
+      })
     }
     set({ snapshot: engine.snapshot(), dots: live.slice(-MAX_DOTS) })
   },

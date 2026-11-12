@@ -1,6 +1,6 @@
 # 02: Database and call-and-wait
 
-Status: open
+Status: resolved
 Type: task
 Blocked by: 01
 
@@ -35,3 +35,13 @@ Backlog limits, Rejected / Failed / Timed out, several Connections, editing.
 Run the app with the slow-Database numbers: the Server shows all slots occupied while the Database is the real limit.
 
 ## Comments
+
+**2026-11-12, resolved.** Notes for later tickets:
+
+- Each hop of a Request is an internal `Call { request, caller, parent }`; responses unwind through `parent` back to the Source. Rejected / Failed / Timed out (tickets 03 and 04) should travel the same path.
+- Server and Database share one internal "worker" state and one snapshot shape, `WorkerSnapshot`: `occupied` (all slots in use, including those waiting on a call), `waitingOnCall`, `concurrency`, `backlog`, `completed`. The ticket 01 field `inProgress` was renamed to `occupied` to match Utilisation in the glossary.
+- `SourceSnapshot` gained `averageLatency` (seconds, null before the first response).
+- `Movement.direction` is now `'call' | 'response'`. On the canvas, calls ride above the line in blue and responses below it in green.
+- A Server still uses only its first outgoing Connection; round-robin is ticket 04. A Database ignores outgoing Connections; validation (ticket 06) will forbid them.
+- Default architecture is Source (Rate 8) to Server (4, 20 ms) to Database (2, 200 ms). Average latency is about 0.6 s, which matches the M/M/2 formula for the Database at 80% load (about 0.58 s).
+- Checked in the browser at Rate 20: Server 4/4 slots, 3 waiting on the call, Backlog 87; Database 2/2, Backlog 1.
