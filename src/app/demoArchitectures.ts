@@ -1,8 +1,9 @@
 import type { ComponentId, Scenario } from '../engine'
+import type { Design } from './design'
 
 /**
- * Hard-coded architectures, switchable from the toolbar until the editor
- * (ticket 06) and the Scenario menu (ticket 09) replace them.
+ * Ready-made architectures offered in the Examples menu. Ticket 09 turns
+ * these into the built-in Scenarios.
  */
 export interface DemoArchitecture {
   name: string
@@ -82,3 +83,9 @@ const queueBehindApi: DemoArchitecture = {
 }
 
 export const demoArchitectures: DemoArchitecture[] = [threeServers, queueBehindApi]
+
+/** The hard-coded architectures as editable Designs, for the Examples menu. */
+export const examples: { name: string; design: Design }[] = demoArchitectures.map((demo) => ({
+  name: demo.name,
+  design: { seed: demo.scenario.seed, architecture: demo.scenario.architecture, layout: demo.layout },
+}))

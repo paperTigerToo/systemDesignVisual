@@ -59,8 +59,261 @@ body,
   cursor: pointer;
 }
 
-.toolbar__button:hover {
+.toolbar__button:hover:not(:disabled) {
   background: rgb(79 179 255 / 0.12);
+}
+
+.toolbar__button:disabled {
+  border-color: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 200px 1fr 280px;
+  min-height: 0;
+}
+
+.palette,
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  overflow-y: auto;
+  background: var(--panel);
+}
+
+.palette {
+  border-right: 1px solid var(--border);
+}
+
+.side-panel {
+  border-left: 1px solid var(--border);
+}
+
+.panel__title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.panel__title--spaced {
+  margin-top: 18px;
+}
+
+.panel__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.panel__hint--footer {
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.palette__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+}
+
+.palette__item:hover {
+  border-color: var(--accent);
+}
+
+.palette__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.palette__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.palette__hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings__kind {
+  font-weight: 600;
+}
+
+.settings__text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.setting__label {
+  color: var(--muted);
+}
+
+.setting__input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.setting__unit {
+  flex: none;
+  width: 44px;
+  color: var(--muted);
+}
+
+.danger-button {
+  margin-top: 4px;
+  padding: 6px 0;
+  border: 1px solid rgb(255 93 93 / 0.6);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--overloaded);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.danger-button:hover {
+  background: rgb(255 93 93 / 0.12);
+}
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--overloaded);
+  color: #fff;
+  text-align: center;
+}
+
+.problems {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.problems li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--overloaded);
+}
+
+.problems__where {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.problems--inline li {
+  color: var(--overloaded);
+}
+
+.problems__ok {
+  margin: 0;
+  color: var(--healthy);
+  font-size: 12px;
+}
+
+.component__problems {
+  max-width: 190px;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: rgb(255 93 93 / 0.12);
+  color: var(--overloaded);
+  font-size: 11px;
+  line-height: 1.35;
+  list-style: none;
+}
+
+.component--problem {
+  border-color: var(--overloaded);
+  border-style: dashed;
+}
+
+.react-flow__node.selected .component {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.connection--problem {
+  stroke: var(--overloaded) !important;
+  stroke-dasharray: 6 4;
+}
+
+.connection--selected {
+  stroke: var(--accent) !important;
+}
+
+.component .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--panel);
+  background: var(--muted);
+}
+
+.component .react-flow__handle:hover {
+  background: var(--accent);
 }
 
 .toolbar__clock {

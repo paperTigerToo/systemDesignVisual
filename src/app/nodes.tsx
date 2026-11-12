@@ -1,16 +1,22 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
+import type { ReactNode } from 'react'
 import type { QueueSnapshot, WorkerSnapshot } from '../engine'
 import { useSimulation } from './simulationStore'
 
-type ComponentNodeData = { label: string }
+type ComponentNodeData = {
+  label: string
+  /** Validation messages for this Component; empty when it is fine. */
+  problems: string[]
+}
 export type ComponentNode = Node<ComponentNodeData>
 
 /** How long, in simulated seconds, a Component stays red after it last Rejected a Request. */
 const REJECTION_MEMORY = 1
 
-type Status = 'healthy' | 'busy' | 'overloaded' | 'killed'
+type Status = 'idle' | 'healthy' | 'busy' | 'overloaded' | 'killed'
 
 const statusLabel: Record<Status, string> = {
+  idle: '',
   healthy: 'Healthy',
   busy: 'Busy',
   overloaded: 'Overloaded',
@@ -20,6 +26,7 @@ const statusLabel: Record<Status, string> = {
 /** Status from Utilisation averaged over the last second or so, plus any recent Rejections. */
 function statusOf(worker: WorkerSnapshot, recentUtilisation: number, time: number): Status {
   if (worker.killed) return 'killed'
+  if (time === 0) return 'idle'
   const rejectingNow = worker.lastRejectedAt !== null && time - worker.lastRejectedAt < REJECTION_MEMORY
   if (rejectingNow || recentUtilisation >= 0.95) return 'overloaded'
   if (recentUtilisation >= 0.7) return 'busy'
@@ -35,12 +42,53 @@ function formatLatency(seconds: number | null): string {
   return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(2)} s`
 }
 
+function formatSeconds(seconds: number | null): string {
+  if (seconds === null) return '–'
+  return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(1)} s`
+}
+
+/**
+ * The frame every Component shares: handles on both sides (so any Connection can
+ * be drawn, and validation explains the ones that are not allowed), a header
+ * with kind and status, the name, and any validation problems.
+ */
+function ComponentFrame({
+  kind,
+  status,
+  data,
+  children,
+}: {
+  kind: string
+  status: Status
+  data: ComponentNodeData
+  children: ReactNode
+}) {
+  const hasProblems = data.problems.length > 0
+  return (
+    <div className={`component component--${status}${hasProblems ? ' component--problem' : ''}`}>
+      <Handle type="target" position={Position.Left} />
+      <div className="component__header">
+        <div className="component__kind">{kind}</div>
+        {statusLabel[status] && <div className={`status status--${status}`}>{statusLabel[status]}</div>}
+      </div>
+      <div className="component__name">{data.label}</div>
+      {hasProblems && (
+        <ul className="component__problems" role="alert">
+          {data.problems.map((message, index) => (
+            <li key={index}>{message}</li>
+          ))}
+        </ul>
+      )}
+      {children}
+      <Handle type="source" position={Position.Right} />
+    </div>
+  )
+}
+
 export function SourceNode({ id, data }: NodeProps<ComponentNode>) {
   const snapshot = useComponentSnapshot(id)
   return (
-    <div className="component component--source">
-      <div className="component__kind">Source</div>
-      <div className="component__name">{data.label}</div>
+    <ComponentFrame kind="Source" status="idle" data={data}>
       {snapshot?.kind === 'source' && (
         <dl className="component__readout">
           <dt>Completed</dt>
@@ -57,8 +105,7 @@ export function SourceNode({ id, data }: NodeProps<ComponentNode>) {
           <dd>{formatLatency(snapshot.averageLatency)}</dd>
         </dl>
       )}
-      <Handle type="source" position={Position.Right} isConnectable={false} />
-    </div>
+    </ComponentFrame>
   )
 }
 
@@ -84,25 +131,35 @@ function BacklogBar({ backlog, capacity, label = 'Backlog' }: { backlog: number;
   )
 }
 
-function WorkerNode({
-  id,
-  data,
-  kindLabel,
-  callsDownstream,
-}: NodeProps<ComponentNode> & { kindLabel: string; callsDownstream: boolean }) {
+function KillButton({ id, killed }: { id: string; killed: boolean }) {
+  const applyIntervention = useSimulation((state) => state.applyIntervention)
+  return (
+    <button
+      type="button"
+      className={`kill-button nodrag ${killed ? 'kill-button--revive' : ''}`}
+      onClick={(event) => {
+        // Killing is not selecting: keep the click away from React Flow's selection.
+        event.stopPropagation()
+        applyIntervention({ kind: killed ? 'revive' : 'kill', componentId: id })
+      }}
+    >
+      {killed ? 'Revive' : 'Kill'}
+    </button>
+  )
+}
+
+function WorkerNode({ id, data, kindLabel }: NodeProps<ComponentNode> & { kindLabel: string }) {
   const snapshot = useComponentSnapshot(id)
   const time = useSimulation((state) => state.snapshot.time)
   const recentUtilisation = useSimulation((state) => state.recentUtilisation[id] ?? 0)
+  const callsDownstream = useSimulation((state) =>
+    state.design.architecture.connections.some((connection) => connection.from === id),
+  )
   if (snapshot?.kind !== 'server' && snapshot?.kind !== 'database') return null
   const status = statusOf(snapshot, recentUtilisation, time)
+
   return (
-    <div className={`component component--${status}`}>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div className="component__header">
-        <div className="component__kind">{kindLabel}</div>
-        <div className={`status status--${status}`}>{statusLabel[status]}</div>
-      </div>
-      <div className="component__name">{data.label}</div>
+    <ComponentFrame kind={kindLabel} status={status} data={data}>
       <dl className="component__readout">
         <dt>Slots in use</dt>
         <dd>
@@ -125,37 +182,19 @@ function WorkerNode({
       </dl>
       <BacklogBar backlog={snapshot.backlog} capacity={snapshot.backlogCapacity} />
       <KillButton id={id} killed={snapshot.killed} />
-      {callsDownstream && <Handle type="source" position={Position.Right} isConnectable={false} />}
-    </div>
-  )
-}
-
-function KillButton({ id, killed }: { id: string; killed: boolean }) {
-  const applyIntervention = useSimulation((state) => state.applyIntervention)
-  return (
-    <button
-      type="button"
-      className={`kill-button nodrag ${killed ? 'kill-button--revive' : ''}`}
-      onClick={() => applyIntervention({ kind: killed ? 'revive' : 'kill', componentId: id })}
-    >
-      {killed ? 'Revive' : 'Kill'}
-    </button>
+    </ComponentFrame>
   )
 }
 
 /** Status of a Queue from how full it is, plus any recent Rejections. */
 function queueStatusOf(queue: QueueSnapshot, time: number): Status {
   if (queue.killed) return 'killed'
+  if (time === 0) return 'idle'
   const rejectingNow = queue.lastRejectedAt !== null && time - queue.lastRejectedAt < REJECTION_MEMORY
   const fill = fillFraction(queue.depth, queue.capacity)
   if (rejectingNow || fill >= 0.9) return 'overloaded'
   if (fill >= 0.5) return 'busy'
   return 'healthy'
-}
-
-function formatSeconds(seconds: number | null): string {
-  if (seconds === null) return '–'
-  return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(1)} s`
 }
 
 export function QueueNode({ id, data }: NodeProps<ComponentNode>) {
@@ -165,13 +204,7 @@ export function QueueNode({ id, data }: NodeProps<ComponentNode>) {
   const status = queueStatusOf(snapshot, time)
 
   return (
-    <div className={`component component--${status}`}>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div className="component__header">
-        <div className="component__kind">Queue</div>
-        <div className={`status status--${status}`}>{statusLabel[status]}</div>
-      </div>
-      <div className="component__name">{data.label}</div>
+    <ComponentFrame kind="Queue" status={status} data={data}>
       <BacklogBar label="Held" backlog={snapshot.depth} capacity={snapshot.capacity} />
       <dl className="component__readout component__readout--spaced">
         <dt>Avg time held</dt>
@@ -186,17 +219,16 @@ export function QueueNode({ id, data }: NodeProps<ComponentNode>) {
         <dd>{snapshot.failed}</dd>
       </dl>
       <KillButton id={id} killed={snapshot.killed} />
-      <Handle type="source" position={Position.Right} isConnectable={false} />
-    </div>
+    </ComponentFrame>
   )
 }
 
 export function ServerNode(props: NodeProps<ComponentNode>) {
-  return <WorkerNode {...props} kindLabel="Server" callsDownstream />
+  return <WorkerNode {...props} kindLabel="Server" />
 }
 
 export function DatabaseNode(props: NodeProps<ComponentNode>) {
-  return <WorkerNode {...props} kindLabel="Database" callsDownstream={false} />
+  return <WorkerNode {...props} kindLabel="Database" />
 }
 
 export const nodeTypes = { source: SourceNode, server: ServerNode, database: DatabaseNode, queue: QueueNode }

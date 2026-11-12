@@ -1,83 +1,74 @@
-import { Background, ReactFlow, type Edge } from '@xyflow/react'
+import { ReactFlowProvider } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useMemo } from 'react'
-import { edgeTypes } from './ConnectionEdge'
-import { demoArchitectures, type DemoArchitecture } from './demoArchitectures'
-import { nodeTypes, type ComponentNode } from './nodes'
+import { Canvas } from './Canvas'
+import { examples } from './demoArchitectures'
+import { starterDesign } from './design'
+import { Palette } from './Palette'
+import { SettingsPanel } from './SettingsPanel'
 import { useSimulation } from './simulationStore'
 import { usePlaybackLoop } from './usePlaybackLoop'
 import './styles.css'
 
-function toFlow(demo: DemoArchitecture): { nodes: ComponentNode[]; edges: Edge[] } {
-  const { components, connections } = demo.scenario.architecture
-  const nodes: ComponentNode[] = components.map((component) => {
-    const layout = demo.layout[component.id]
-    return {
-      id: component.id,
-      type: component.kind,
-      position: { x: layout?.x ?? 0, y: layout?.y ?? 0 },
-      data: { label: layout?.label ?? component.id },
-      // React Flow turns off pointer events on nodes that are not draggable, selectable or
-      // connectable, which would swallow clicks on the Kill button.
-      style: { pointerEvents: 'all' },
-    }
-  })
-  const edges: Edge[] = connections.map((connection) => ({
-    id: `${connection.from}->${connection.to}`,
-    source: connection.from,
-    target: connection.to,
-    type: 'connection',
-  }))
-  return { nodes, edges }
+const starter = { name: 'Starter: Source, Server, Database', design: starterDesign }
+const empty = { name: 'Empty canvas', design: { seed: 1, architecture: { components: [], connections: [] }, layout: {} } }
+const designs = [starter, ...examples, empty]
+
+function Toolbar() {
+  const playing = useSimulation((state) => state.playing)
+  const togglePlaying = useSimulation((state) => state.togglePlaying)
+  const time = useSimulation((state) => state.snapshot.time)
+  const blocked = useSimulation((state) => state.problems.length > 0)
+  const loadDesign = useSimulation((state) => state.loadDesign)
+
+  return (
+    <header className="toolbar">
+      <h1 className="toolbar__title">System Design Simulator</h1>
+      <button
+        type="button"
+        className="toolbar__button"
+        onClick={togglePlaying}
+        disabled={!playing && blocked}
+        title={!playing && blocked ? 'Fix the problems listed on the right first' : undefined}
+      >
+        {playing ? 'Pause' : 'Play'}
+      </button>
+      <span className="toolbar__clock">t = {time.toFixed(1)} s</span>
+      {/* Ticket 09 replaces this with the Scenario menu. */}
+      <label className="toolbar__picker">
+        <span>Load</span>
+        <select
+          value=""
+          onChange={(event) => {
+            const chosen = designs[Number(event.target.value)]
+            if (chosen) loadDesign(chosen.design)
+          }}
+        >
+          <option value="" disabled>
+            Choose an architecture…
+          </option>
+          {designs.map((entry, index) => (
+            <option key={entry.name} value={index}>
+              {entry.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    </header>
+  )
 }
 
 export function App() {
   usePlaybackLoop()
-  const playing = useSimulation((state) => state.playing)
-  const togglePlaying = useSimulation((state) => state.togglePlaying)
-  const time = useSimulation((state) => state.snapshot.time)
-  const architectureIndex = useSimulation((state) => state.architectureIndex)
-  const loadArchitecture = useSimulation((state) => state.loadArchitecture)
-  const { nodes, edges } = useMemo(() => toFlow(demoArchitectures[architectureIndex]!), [architectureIndex])
-
   return (
-    <div className="app">
-      <header className="toolbar">
-        <h1 className="toolbar__title">System Design Simulator</h1>
-        <button type="button" className="toolbar__button" onClick={togglePlaying}>
-          {playing ? 'Pause' : 'Play'}
-        </button>
-        <span className="toolbar__clock">t = {time.toFixed(1)} s</span>
-        {/* Temporary: replaced by the editor (ticket 06) and the Scenario menu (ticket 09). */}
-        <label className="toolbar__picker">
-          <span>Architecture</span>
-          <select value={architectureIndex} onChange={(event) => loadArchitecture(Number(event.target.value))}>
-            {demoArchitectures.map((demo, index) => (
-              <option key={demo.name} value={index}>
-                {demo.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </header>
-      <main className="canvas">
-        <ReactFlow
-          key={architectureIndex}
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          colorMode="dark"
-          fitView
-          fitViewOptions={{ padding: 0.4 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background />
-        </ReactFlow>
-      </main>
-    </div>
+    <ReactFlowProvider>
+      <div className="app">
+        <Toolbar />
+        <div className="workspace">
+          <Palette />
+          <Canvas />
+          <SettingsPanel />
+        </div>
+      </div>
+    </ReactFlowProvider>
   )
 }
