@@ -8,7 +8,7 @@ import {
   type Scenario,
   type Snapshot,
 } from '../engine'
-import { defaultScenario } from './defaultScenario'
+import { demoArchitectures } from './demoArchitectures'
 
 /** How long, in simulated seconds, a dot takes to cross a Connection. Purely cosmetic. */
 export const DOT_TRAVEL_TIME = 0.6
@@ -40,6 +40,10 @@ interface SimulationState {
    * second of simulated time, so status colours do not flicker.
    */
   recentUtilisation: Record<ComponentId, number>
+  /** Which of the hard-coded architectures is loaded. */
+  architectureIndex: number
+  /** Start a fresh, paused Run of one of the hard-coded architectures. */
+  loadArchitecture(index: number): void
   togglePlaying(): void
   /** Apply a change at the current simulated time, playing or paused. */
   applyIntervention(intervention: Intervention): void
@@ -60,7 +64,8 @@ function smoothUtilisation(previous: Snapshot, next: Snapshot, smoothed: Record<
   const result: Record<ComponentId, number> = {}
   for (const [id, component] of Object.entries(next.components)) {
     const before = previous.components[id]
-    if (component.kind === 'source' || before?.kind !== component.kind) continue
+    if (component.kind !== 'server' && component.kind !== 'database') continue
+    if (before?.kind !== component.kind) continue
     const frameAverage = (component.occupiedTime - before.occupiedTime) / (elapsed * component.concurrency)
     const prior = smoothed[id] ?? frameAverage
     result[id] = prior + weight * (frameAverage - prior)
@@ -69,8 +74,15 @@ function smoothUtilisation(previous: Snapshot, next: Snapshot, smoothed: Record<
 }
 
 export const useSimulation = create<SimulationState>()((set, get) => ({
-  ...freshEngine(defaultScenario),
+  ...freshEngine(demoArchitectures[0]!.scenario),
+  architectureIndex: 0,
   playing: false,
+
+  loadArchitecture(index) {
+    const demo = demoArchitectures[index]
+    if (!demo) return
+    set({ ...freshEngine(demo.scenario), architectureIndex: index, playing: false })
+  },
 
   togglePlaying() {
     set({ playing: !get().playing })

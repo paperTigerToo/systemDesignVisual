@@ -248,3 +248,25 @@ body,
 .component .react-flow__handle {
   top: 28px;
 }
+
+.component__readout--spaced {
+  margin-top: 8px;
+}
+
+.toolbar__picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toolbar__picker select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}

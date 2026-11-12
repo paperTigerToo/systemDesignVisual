@@ -7,6 +7,7 @@ import type {
   Intervention,
   Movement,
   Outcome,
+  QueueSpec,
   ResponseOutcome,
   Scenario,
   ServerSpec,
@@ -51,7 +52,8 @@ interface Request {
 /**
  * One hop of a Request: `caller` sent it to some Component and is waiting for
  * the response. `parent` is the call that the caller itself is working on,
- * so responses can unwind back to the Source.
+ * so responses can unwind back to the Source; a Queue starts a fresh chain
+ * with no parent.
  */
 interface Call {
   request: Request
@@ -101,10 +103,37 @@ interface WorkerState {
   failed: number
 }
 
+interface Held {
+  request: Request
+  heldSince: number
+}
+
+interface QueueState {
+  spec: QueueSpec
+  /** Downstream Servers and Databases it hands Requests to. */
+  route: Route
+  killed: boolean
+  held: Held[]
+  heldHead: number
+  received: number
+  rejected: number
+  lastRejectedAt: number | null
+  dispatched: number
+  timeHeldSum: number
+  processed: number
+  lost: number
+  failed: number
+}
+
 type Event =
   | { kind: 'generate'; sourceId: ComponentId }
   | { kind: 'workDone'; workerId: ComponentId; call: Call }
   | { kind: 'timeLimit'; request: Request }
+
+/** A first-in, first-out list stored as an array plus a head index, compacted occasionally. */
+function queueLength<T>(items: T[], head: number): number {
+  return items.length - head
+}
 
 export function createEngine(scenario: Scenario, options: EngineOptions = {}): Engine {
   const movementCap = options.movementCap ?? 1000
@@ -112,6 +141,9 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   const heap = new EventHeap<Event>()
   const sources = new Map<ComponentId, SourceState>()
   const workers = new Map<ComponentId, WorkerState>()
+  const queues = new Map<ComponentId, QueueState>()
+  /** For each Server or Database, the Queues that hand it Requests, in declaration order. */
+  const feeders = new Map<ComponentId, QueueState[]>()
   const order: ComponentId[] = []
   let movements: Movement[] = []
   let now = 0
@@ -124,32 +156,60 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
 
   for (const spec of scenario.architecture.components) {
     order.push(spec.id)
-    if (spec.kind === 'source') {
-      sources.set(spec.id, {
-        spec,
-        route: routeFrom(spec.id),
-        created: 0,
-        outcomes: { completed: 0, rejected: 0, failed: 0, timedOut: 0 },
-        latencySum: 0,
-      })
-    } else {
-      workers.set(spec.id, {
-        spec,
-        route: spec.kind === 'server' ? routeFrom(spec.id) : { targets: [], next: 0 },
-        killed: false,
-        active: new Set(),
-        occupied: 0,
-        occupiedTime: 0,
-        occupiedSince: 0,
-        waitingOnCall: 0,
-        backlog: [],
-        backlogHead: 0,
-        received: 0,
-        completed: 0,
-        rejected: 0,
-        lastRejectedAt: null,
-        failed: 0,
-      })
+    switch (spec.kind) {
+      case 'source':
+        sources.set(spec.id, {
+          spec,
+          route: routeFrom(spec.id),
+          created: 0,
+          outcomes: { completed: 0, rejected: 0, failed: 0, timedOut: 0 },
+          latencySum: 0,
+        })
+        break
+      case 'queue':
+        queues.set(spec.id, {
+          spec,
+          route: routeFrom(spec.id),
+          killed: false,
+          held: [],
+          heldHead: 0,
+          received: 0,
+          rejected: 0,
+          lastRejectedAt: null,
+          dispatched: 0,
+          timeHeldSum: 0,
+          processed: 0,
+          lost: 0,
+          failed: 0,
+        })
+        break
+      default:
+        workers.set(spec.id, {
+          spec,
+          route: spec.kind === 'server' ? routeFrom(spec.id) : { targets: [], next: 0 },
+          killed: false,
+          active: new Set(),
+          occupied: 0,
+          occupiedTime: 0,
+          occupiedSince: 0,
+          waitingOnCall: 0,
+          backlog: [],
+          backlogHead: 0,
+          received: 0,
+          completed: 0,
+          rejected: 0,
+          lastRejectedAt: null,
+          failed: 0,
+        })
+    }
+  }
+
+  for (const queue of queues.values()) {
+    for (const target of queue.route.targets) {
+      if (!workers.has(target)) continue
+      const list = feeders.get(target) ?? []
+      list.push(queue)
+      feeders.set(target, list)
     }
   }
 
@@ -168,14 +228,25 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     if (movements.length < movementCap) movements.push(movement)
   }
 
-  /** The next live target round-robin, skipping Killed Components; undefined when none are live. */
-  function chooseTarget(route: Route): ComponentId | undefined {
+  /** A Server, Database or Queue that is not Killed. */
+  function isLive(id: ComponentId): boolean {
+    const component = workers.get(id) ?? queues.get(id)
+    return component !== undefined && !component.killed
+  }
+
+  /** A live Server or Database with a free Concurrency slot. */
+  function hasFreeSlot(id: ComponentId): boolean {
+    const worker = workers.get(id)
+    return worker !== undefined && !worker.killed && worker.occupied < worker.spec.concurrency
+  }
+
+  /** The next target round-robin that passes `accepts`; undefined when none does. */
+  function chooseTarget(route: Route, accepts: (id: ComponentId) => boolean): ComponentId | undefined {
     const count = route.targets.length
     for (let i = 0; i < count; i++) {
       const index = (route.next + i) % count
       const target = route.targets[index]!
-      const worker = workers.get(target)
-      if (worker && !worker.killed) {
+      if (accepts(target)) {
         route.next = (index + 1) % count
         return target
       }
@@ -183,20 +254,26 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     return undefined
   }
 
-  function backlogLength(worker: WorkerState): number {
-    return worker.backlog.length - worker.backlogHead
-  }
-
   function takeFromBacklog(worker: WorkerState): Call | undefined {
-    if (backlogLength(worker) === 0) return undefined
+    if (queueLength(worker.backlog, worker.backlogHead) === 0) return undefined
     const call = worker.backlog[worker.backlogHead]!
     worker.backlogHead++
-    // Compact occasionally so the array does not grow forever.
     if (worker.backlogHead > 1024 && worker.backlogHead * 2 > worker.backlog.length) {
       worker.backlog = worker.backlog.slice(worker.backlogHead)
       worker.backlogHead = 0
     }
     return call
+  }
+
+  function takeHeld(queue: QueueState): Held | undefined {
+    if (queueLength(queue.held, queue.heldHead) === 0) return undefined
+    const held = queue.held[queue.heldHead]!
+    queue.heldHead++
+    if (queue.heldHead > 1024 && queue.heldHead * 2 > queue.held.length) {
+      queue.held = queue.held.slice(queue.heldHead)
+      queue.heldHead = 0
+    }
+    return held
   }
 
   /** Bring the occupied slot-seconds up to now; call before every change to `occupied`. */
@@ -212,24 +289,63 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     heap.push(now + random.exponential(worker.spec.workTime), { kind: 'workDone', workerId: worker.spec.id, call })
   }
 
-  /** Free the slot `call` held and start the next Request in the Backlog. */
+  /** Free the slot `call` held, start the next Request in the Backlog, and let any Queue use a slot still free. */
   function releaseSlot(worker: WorkerState, call: Call): void {
     accrueOccupiedTime(worker)
     worker.occupied--
     worker.active.delete(call)
     const next = takeFromBacklog(worker)
     if (next) startWork(worker, next)
+    pumpFeeders(worker)
   }
 
-  /** Send `request` from `caller` to `target`: start work, wait in the Backlog, or be Rejected. */
+  /** Hand held Requests downstream while some target has a free slot, oldest first. */
+  function pump(queue: QueueState): void {
+    if (queue.killed) return
+    for (;;) {
+      if (queueLength(queue.held, queue.heldHead) === 0) return
+      const target = chooseTarget(queue.route, hasFreeSlot)
+      if (target === undefined) return
+      const held = takeHeld(queue)!
+      queue.dispatched++
+      queue.timeHeldSum += now - held.heldSince
+      sendCall(queue.spec.id, target, held.request, undefined)
+    }
+  }
+
+  function pumpFeeders(worker: WorkerState): void {
+    for (const queue of feeders.get(worker.spec.id) ?? []) {
+      if (!hasFreeSlot(worker.spec.id)) return
+      pump(queue)
+    }
+  }
+
+  /** Send `request` from `caller` to `target`. */
   function sendCall(caller: ComponentId, target: ComponentId, request: Request, parent: Call | undefined): void {
-    const worker = workers.get(target)!
     recordMovement({ direction: 'call', requestId: request.id, from: caller, to: target, time: now })
     const call: Call = { request, caller, parent, cancelled: false }
+
+    const queue = queues.get(target)
+    if (queue) {
+      queue.received++
+      if (queueLength(queue.held, queue.heldHead) < queue.spec.capacity) {
+        // Accept and release the caller at once; the work happens later, asynchronously.
+        queue.held.push({ request, heldSince: now })
+        respond(queue.spec.id, call, 'completed')
+        pump(queue)
+      } else {
+        queue.rejected++
+        queue.lastRejectedAt = now
+        respond(queue.spec.id, call, 'rejected')
+      }
+      return
+    }
+
+    const worker = workers.get(target)!
     worker.received++
     if (worker.occupied < worker.spec.concurrency) {
       startWork(worker, call)
-    } else if (backlogLength(worker) < worker.spec.backlogCapacity) {
+    } else if (queueLength(worker.backlog, worker.backlogHead) < worker.spec.backlogCapacity) {
       worker.backlog.push(call)
     } else {
       worker.rejected++
@@ -261,6 +377,13 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
       finishAtSource(call.request, outcome)
       return
     }
+    const queue = queues.get(call.caller)
+    if (queue) {
+      // The asynchronous part of a Request has finished; no one upstream is waiting on it.
+      if (outcome === 'completed') queue.processed++
+      else queue.lost++
+      return
+    }
     // The caller is a Server waiting on this call: pass the Outcome back up,
     // unless the caller was Killed meanwhile and has already answered Failed.
     const parent = call.parent!
@@ -272,7 +395,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     respond(caller.spec.id, parent, outcome)
   }
 
-  function kill(worker: WorkerState): void {
+  function killWorker(worker: WorkerState): void {
     if (worker.killed) return
     accrueOccupiedTime(worker)
     const inside = [...worker.active, ...worker.backlog.slice(worker.backlogHead)]
@@ -289,10 +412,24 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     }
   }
 
-  function revive(worker: WorkerState): void {
+  function reviveWorker(worker: WorkerState): void {
     if (!worker.killed) return
     worker.killed = false
     worker.occupiedSince = now
+    pumpFeeders(worker)
+  }
+
+  function killQueue(queue: QueueState): void {
+    if (queue.killed) return
+    queue.killed = true
+    // Held Requests already answered Completed to their callers; they are simply lost.
+    queue.failed += queueLength(queue.held, queue.heldHead)
+    queue.held = []
+    queue.heldHead = 0
+  }
+
+  function reviveQueue(queue: QueueState): void {
+    queue.killed = false
   }
 
   function handle(event: Event): void {
@@ -304,7 +441,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         if (Number.isFinite(source.spec.timeLimit)) {
           heap.push(now + source.spec.timeLimit, { kind: 'timeLimit', request })
         }
-        const target = chooseTarget(source.route)
+        const target = chooseTarget(source.route, isLive)
         if (target === undefined) finishAtSource(request, 'failed')
         else sendCall(source.spec.id, target, request, undefined)
         scheduleNextRequest(source)
@@ -315,7 +452,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         if (call.cancelled) return
         const worker = workers.get(event.workerId)!
         if (worker.route.targets.length > 0) {
-          const target = chooseTarget(worker.route)
+          const target = chooseTarget(worker.route, isLive)
           if (target !== undefined) {
             // Call-and-wait: keep the slot occupied until the downstream call responds.
             worker.waitingOnCall++
@@ -359,10 +496,18 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     },
 
     applyIntervention(intervention) {
-      const worker = workers.get(intervention.componentId)
-      if (!worker) throw new Error(`Only a Server or Database can be Killed or revived: ${intervention.componentId}`)
-      if (intervention.kind === 'kill') kill(worker)
-      else revive(worker)
+      const id = intervention.componentId
+      const worker = workers.get(id)
+      const queue = queues.get(id)
+      if (worker) {
+        if (intervention.kind === 'kill') killWorker(worker)
+        else reviveWorker(worker)
+      } else if (queue) {
+        if (intervention.kind === 'kill') killQueue(queue)
+        else reviveQueue(queue)
+      } else {
+        throw new Error(`Only a Server, Database or Queue can be Killed or revived: ${id}`)
+      }
     },
 
     snapshot() {
@@ -380,6 +525,24 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
           }
           continue
         }
+        const queue = queues.get(id)
+        if (queue) {
+          components[id] = {
+            kind: 'queue',
+            killed: queue.killed,
+            received: queue.received,
+            depth: queueLength(queue.held, queue.heldHead),
+            capacity: queue.spec.capacity,
+            rejected: queue.rejected,
+            lastRejectedAt: queue.lastRejectedAt,
+            dispatched: queue.dispatched,
+            averageTimeHeld: queue.dispatched === 0 ? null : queue.timeHeldSum / queue.dispatched,
+            processed: queue.processed,
+            lost: queue.lost,
+            failed: queue.failed,
+          }
+          continue
+        }
         const worker = workers.get(id)!
         components[id] = {
           kind: worker.spec.kind,
@@ -390,7 +553,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
           concurrency: worker.spec.concurrency,
           utilisation: worker.occupied / worker.spec.concurrency,
           occupiedTime: worker.occupiedTime + worker.occupied * (now - worker.occupiedSince),
-          backlog: backlogLength(worker),
+          backlog: queueLength(worker.backlog, worker.backlogHead),
           backlogCapacity: worker.spec.backlogCapacity,
           completed: worker.completed,
           rejected: worker.rejected,

@@ -30,7 +30,14 @@ export interface DatabaseSpec extends WorkerSettings {
   id: ComponentId
 }
 
-export type ComponentSpec = SourceSpec | ServerSpec | DatabaseSpec
+export interface QueueSpec {
+  kind: 'queue'
+  id: ComponentId
+  /** Most Requests it may hold; any more are Rejected. */
+  capacity: number
+}
+
+export type ComponentSpec = SourceSpec | ServerSpec | DatabaseSpec | QueueSpec
 
 export interface ConnectionSpec {
   from: ComponentId
@@ -103,7 +110,31 @@ export interface WorkerSnapshot {
   failed: number
 }
 
-export type ComponentSnapshot = SourceSnapshot | WorkerSnapshot
+export interface QueueSnapshot {
+  kind: 'queue'
+  killed: boolean
+  /** Calls that have arrived here, whatever became of them. */
+  received: number
+  /** Requests held right now, waiting for a downstream slot. */
+  depth: number
+  capacity: number
+  /** Requests turned away because the Queue was full. */
+  rejected: number
+  /** Simulated time this Queue last Rejected a Request, or null if it never has. */
+  lastRejectedAt: number | null
+  /** Requests handed to a downstream Component. */
+  dispatched: number
+  /** Mean seconds a dispatched Request spent held, or null before the first. */
+  averageTimeHeld: number | null
+  /** Dispatched Requests whose downstream work responded Completed. */
+  processed: number
+  /** Dispatched Requests whose downstream work responded Rejected or Failed; they are not redelivered. */
+  lost: number
+  /** Requests held when the Queue was Killed, and so lost. */
+  failed: number
+}
+
+export type ComponentSnapshot = SourceSnapshot | WorkerSnapshot | QueueSnapshot
 
 export interface Snapshot {
   /** Simulated time in seconds. */
