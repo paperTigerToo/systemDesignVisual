@@ -3,6 +3,7 @@ import '@xyflow/react/dist/style.css'
 import { Canvas } from './Canvas'
 import { examples } from './demoArchitectures'
 import { starterDesign } from './design'
+import { MetricsPanel } from './MetricsPanel'
 import { Palette } from './Palette'
 import { SettingsPanel } from './SettingsPanel'
 import { hasStarted, playBlocked, SPEEDS, useSimulation } from './simulationStore'
@@ -123,6 +124,7 @@ export function App() {
           <Canvas />
           <SettingsPanel />
         </div>
+        <MetricsPanel />
       </div>
     </ReactFlowProvider>
   )

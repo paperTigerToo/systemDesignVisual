@@ -1,11 +1,14 @@
 import { EventHeap } from './eventHeap'
+import { percentile } from './metrics'
 import { createRandom, type Random } from './random'
 import type {
   ComponentId,
   ComponentSnapshot,
   ComponentSpec,
+  ComponentMetrics,
   DatabaseSpec,
   Intervention,
+  MetricSample,
   Movement,
   Outcome,
   QueueSpec,
@@ -39,11 +42,21 @@ export interface Engine {
    * simulates every Request).
    */
   takeMovements(): Movement[]
+  /**
+   * Metric samples covering roughly the last `metricsWindow` simulated
+   * seconds, oldest first, one per `metricsInterval`. Samples are taken at
+   * exact multiples of the interval, so they are part of the deterministic Run.
+   */
+  metrics(): MetricSample[]
 }
 
 export interface EngineOptions {
   /** Most movements held between calls to `takeMovements`. */
   movementCap?: number
+  /** Simulated seconds between metric samples. Default 0.5. */
+  metricsInterval?: number
+  /** Simulated seconds of metric samples kept. Default 30. */
+  metricsWindow?: number
 }
 
 interface Request {
@@ -93,6 +106,8 @@ interface SourceState {
   outcomes: Record<Outcome, number>
   /** Sum of latencies of Completed Requests. */
   latencySum: number
+  /** Latencies of Requests Completed since the last metric sample. */
+  intervalLatencies: number[]
 }
 
 /** A Server or Database. */
@@ -168,6 +183,13 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
   let now = 0
   let nextRequestId = 1
 
+  const metricsInterval = options.metricsInterval ?? 0.5
+  const samplesKept = Math.max(1, Math.round((options.metricsWindow ?? 30) / metricsInterval))
+  const samples: MetricSample[] = []
+  let samplesTaken = 0
+  /** Cumulative counters as they stood at the previous sample, keyed by Component id. */
+  const atLastSample = new Map<ComponentId, { outcomes?: Record<Outcome, number>; occupiedTime?: number; dispatched?: number; timeHeldSum?: number }>()
+
   const emptyRoute = (): Route => ({ targets: [], next: 0 })
 
   function createComponent(spec: ComponentSpec): void {
@@ -185,6 +207,7 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
           created: 0,
           outcomes: { completed: 0, rejected: 0, failed: 0, timedOut: 0 },
           latencySum: 0,
+          intervalLatencies: [],
         })
         return
       case 'queue':
@@ -419,7 +442,10 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     request.finished = true
     const source = sources.get(request.sourceId)!
     source.outcomes[outcome]++
-    if (outcome === 'completed') source.latencySum += now - request.createdAt
+    if (outcome === 'completed') {
+      source.latencySum += now - request.createdAt
+      source.intervalLatencies.push(now - request.createdAt)
+    }
   }
 
   /** `responder` has finished with `call`; deliver the Outcome to the caller. */
@@ -594,6 +620,79 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     }
   }
 
+  /** Record the metrics for the interval ending now. */
+  function takeSample(): void {
+    const outcomeKeys: Outcome[] = ['completed', 'rejected', 'failed', 'timedOut']
+    const perSecond = (count: number) => count / metricsInterval
+    const components: Record<ComponentId, ComponentMetrics> = {}
+    const allLatencies: number[] = []
+    const allOutcomes: Record<Outcome, number> = { completed: 0, rejected: 0, failed: 0, timedOut: 0 }
+
+    for (const id of order) {
+      const before = atLastSample.get(id) ?? {}
+      const source = sources.get(id)
+      if (source) {
+        const outcomesPerSecond = { completed: 0, rejected: 0, failed: 0, timedOut: 0 }
+        for (const key of outcomeKeys) {
+          const count = source.outcomes[key] - (before.outcomes?.[key] ?? 0)
+          outcomesPerSecond[key] = perSecond(count)
+          allOutcomes[key] += count
+        }
+        const latencies = source.intervalLatencies
+        for (const latency of latencies) allLatencies.push(latency)
+        components[id] = {
+          kind: 'source',
+          completedPerSecond: outcomesPerSecond.completed,
+          medianLatency: percentile(latencies, 0.5),
+          p95Latency: percentile(latencies, 0.95),
+          outcomesPerSecond,
+        }
+        source.intervalLatencies = []
+        atLastSample.set(id, { outcomes: { ...source.outcomes } })
+        continue
+      }
+      const queue = queues.get(id)
+      if (queue) {
+        const dispatched = queue.dispatched - (before.dispatched ?? 0)
+        const timeHeld = queue.timeHeldSum - (before.timeHeldSum ?? 0)
+        components[id] = {
+          kind: 'queue',
+          depth: queueLength(queue.held, queue.heldHead),
+          timeHeld: dispatched === 0 ? null : timeHeld / dispatched,
+        }
+        atLastSample.set(id, { dispatched: queue.dispatched, timeHeldSum: queue.timeHeldSum })
+        continue
+      }
+      const worker = workers.get(id)!
+      accrueOccupiedTime(worker)
+      components[id] = {
+        kind: worker.spec.kind,
+        utilisation: (worker.occupiedTime - (before.occupiedTime ?? 0)) / (metricsInterval * worker.spec.concurrency),
+        backlog: queueLength(worker.backlog, worker.backlogHead),
+      }
+      atLastSample.set(id, { occupiedTime: worker.occupiedTime })
+    }
+
+    // Removed Sources may still have stray latencies; they belong to no series any more.
+    for (const source of sources.values()) if (source.removed) source.intervalLatencies = []
+    for (const id of [...atLastSample.keys()]) if (!(id in components)) atLastSample.delete(id)
+
+    const overallPerSecond = { completed: 0, rejected: 0, failed: 0, timedOut: 0 }
+    for (const key of outcomeKeys) overallPerSecond[key] = perSecond(allOutcomes[key])
+    samples.push({
+      time: now,
+      overall: {
+        kind: 'source',
+        completedPerSecond: overallPerSecond.completed,
+        medianLatency: percentile(allLatencies, 0.5),
+        p95Latency: percentile(allLatencies, 0.95),
+        outcomesPerSecond: overallPerSecond,
+      },
+      components,
+    })
+    if (samples.length > samplesKept) samples.shift()
+  }
+
   function liveWorkerOrQueue(id: ComponentId) {
     const worker = workers.get(id)
     if (worker && !worker.removed) return { worker }
@@ -610,6 +709,14 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     advanceTo(t) {
       for (;;) {
         const next = heap.peekTime()
+        // Sample times are computed from a count, not accumulated, so they never drift.
+        const sampleAt = (samplesTaken + 1) * metricsInterval
+        if (sampleAt <= t && (next === undefined || next > sampleAt)) {
+          now = sampleAt
+          samplesTaken++
+          takeSample()
+          continue
+        }
         if (next === undefined || next > t) break
         const { time, event } = heap.pop()!
         now = time
@@ -705,6 +812,10 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
         }
       }
       return { time: now, components }
+    },
+
+    metrics() {
+      return samples.slice()
     },
 
     takeMovements() {

@@ -6,6 +6,7 @@ import {
   type ComponentId,
   type Engine,
   type Intervention,
+  type MetricSample,
   type Movement,
   type Problem,
   type SettingKey,
@@ -73,6 +74,8 @@ interface SimulationState {
    * second of simulated time, so status colours do not flicker.
    */
   recentUtilisation: Record<ComponentId, number>
+  /** Metric samples over roughly the last 30 simulated seconds, oldest first. */
+  metrics: MetricSample[]
 
   /** Replace the whole design, for example with an example architecture. */
   loadDesign(design: Design): void
@@ -122,6 +125,7 @@ function freshRun(design: Design) {
     snapshot: engine.snapshot(),
     dots: [] as Dot[],
     recentUtilisation: {} as Record<ComponentId, number>,
+    metrics: [] as MetricSample[],
   }
 }
 
@@ -323,7 +327,11 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       const live = dots.filter((dot) => now - dot.startedAt < DOT_TRAVEL_TIME)
       for (const movement of engine.takeMovements()) live.push(toDot(movement))
       const snapshot = engine.snapshot()
+      // Only hand the charts a new array when a new sample exists, so they redraw a few times a second, not every frame.
+      const sampled = engine.metrics()
+      const metrics = sampled.at(-1)?.time === get().metrics.at(-1)?.time ? get().metrics : sampled
       set({
+        metrics,
         snapshot,
         behind,
         dots: live.slice(-MAX_DOTS),

@@ -180,3 +180,46 @@ export interface TimedIntervention {
   time: number
   intervention: Intervention
 }
+
+/** What one Source's Requests did during one sampling interval. */
+export interface SourceMetrics {
+  kind: 'source'
+  /** Requests that got a Completed Outcome in the interval, per second. */
+  completedPerSecond: number
+  /** Median latency, in seconds, of Requests Completed in the interval, or null if none were. */
+  medianLatency: number | null
+  /** 95th-percentile latency, in seconds, of Requests Completed in the interval, or null if none were. */
+  p95Latency: number | null
+  /** Outcomes recorded in the interval, per second. */
+  outcomesPerSecond: Record<Outcome, number>
+}
+
+/** A Server or Database during one sampling interval. */
+export interface WorkerMetrics {
+  kind: 'server' | 'database'
+  /** Average Utilisation over the interval, 0 to 1. */
+  utilisation: number
+  /** Requests in the Backlog at the end of the interval. */
+  backlog: number
+}
+
+/** A Queue during one sampling interval. */
+export interface QueueMetrics {
+  kind: 'queue'
+  /** Requests held at the end of the interval. */
+  depth: number
+  /** Mean seconds held by Requests dispatched in the interval, or null if none were. */
+  timeHeld: number | null
+}
+
+export type ComponentMetrics = SourceMetrics | WorkerMetrics | QueueMetrics
+
+/** Metrics for the sampling interval ending at `time`. */
+export interface MetricSample {
+  /** Simulated time at the end of the interval. */
+  time: number
+  /** Every Source's Requests together. */
+  overall: SourceMetrics
+  /** Components that existed at the end of the interval. */
+  components: Record<ComponentId, ComponentMetrics>
+}
