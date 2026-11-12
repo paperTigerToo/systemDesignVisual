@@ -514,24 +514,6 @@ body,
   margin-top: 8px;
 }
 
-.toolbar__picker {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.toolbar__picker select {
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-}
-
 .toolbar__group {
   display: flex;
   gap: 8px;
@@ -582,11 +564,6 @@ body,
 
 .toolbar__behind {
   color: var(--busy);
-  font-size: 13px;
-}
-
-.toolbar__changes {
-  color: var(--muted);
   font-size: 13px;
 }
 
@@ -782,4 +759,218 @@ body,
 .chart__tooltip-time,
 .chart__tooltip-detail {
   color: var(--muted);
+}
+
+.notice--info {
+  border-bottom-color: rgb(79 179 255 / 0.4);
+  background: rgb(79 179 255 / 0.1);
+}
+
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.run-status--replay {
+  color: var(--accent);
+}
+
+.run-status__mark {
+  font-size: 9px;
+  letter-spacing: -2px;
+}
+
+.run-status__mark--live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--healthy);
+}
+
+.toolbar__end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.scenario-menu {
+  position: relative;
+}
+
+.scenario-menu__button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 340px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.scenario-menu__button:hover,
+.scenario-menu__button[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+.scenario-menu__button:focus-visible,
+.scenario-menu__item:focus-visible,
+.seed__random:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.scenario-menu__label {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scenario-menu__name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-menu__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 300px;
+  max-height: 70vh;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+}
+
+.scenario-menu__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scenario-menu__item {
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scenario-menu__item:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.scenario-menu__saved {
+  display: flex;
+  align-items: center;
+}
+
+.scenario-menu__delete {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.scenario-menu__delete:hover {
+  background: rgb(255 93 93 / 0.12);
+  color: var(--overloaded);
+}
+
+.scenario-menu__save {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.scenario-menu__save input,
+.seed input {
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.scenario-menu__save input {
+  flex: 1;
+}
+
+.scenario-menu__save .toolbar__button {
+  min-width: 0;
+  padding: 5px 12px;
+}
+
+.scenario-menu__actions {
+  display: flex;
+  flex-direction: column;
+}
+
+.seed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.seed__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.seed input {
+  width: 84px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seed__random {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.seed__random:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }

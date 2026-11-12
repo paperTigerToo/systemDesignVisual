@@ -13,8 +13,10 @@ import {
   type Snapshot,
   type TimedIntervention,
 } from '../engine'
+import { builtInScenarios } from './builtInScenarios'
 import * as edits from './design'
-import { starterDesign, toScenario, type ComponentKind, type Design } from './design'
+import { applyInterventionToDesign, toScenario, type ComponentKind, type Design, type Placement } from './design'
+import { SCENARIO_FORMAT, SCENARIO_VERSION, startingDesign, type ScenarioDocument } from './scenario'
 
 /** How long, in simulated seconds, a dot takes to cross a Connection. Purely cosmetic. */
 export const DOT_TRAVEL_TIME = 0.6
@@ -42,6 +44,12 @@ export interface Dot {
   startedAt: number
 }
 
+/** A message along the top: why something was refused, or confirmation that something worked. */
+export interface Notice {
+  text: string
+  tone: 'error' | 'info'
+}
+
 /** What is selected on the canvas, if anything. */
 export type Selection = { kind: 'component'; id: ComponentId } | { kind: 'connection'; from: ComponentId; to: ComponentId } | null
 
@@ -59,8 +67,22 @@ interface SimulationState {
   interventions: TimedIntervention[]
   /** Ids used at any point in this Run, so a removed Component's id is never handed out again. */
   knownIds: ReadonlySet<ComponentId>
-  /** Why the last edit was refused, if it was. */
-  notice: string | null
+  notice: Notice | null
+  /** The name of the open Scenario. */
+  scenarioName: string
+  /** The open Scenario's recorded Interventions, as opened; a reset replays them again. */
+  script: TimedIntervention[]
+  /**
+   * Recorded Interventions still to be replayed, in order. Empty once the
+   * replay finishes, or as soon as the user changes anything, after which the
+   * Run is live.
+   */
+  pending: TimedIntervention[]
+  /**
+   * Position and name of every Component in this Run, including those removed
+   * and those a pending Intervention will add, so a saved Scenario can place them.
+   */
+  placements: Record<ComponentId, Placement>
 
   engine: Engine
   playing: boolean
@@ -77,8 +99,14 @@ interface SimulationState {
   /** Metric samples over roughly the last 30 simulated seconds, oldest first. */
   metrics: MetricSample[]
 
-  /** Replace the whole design, for example with an example architecture. */
-  loadDesign(design: Design): void
+  /** Open a Scenario at time zero, ready to replay its recorded Interventions. */
+  openScenario(scenario: ScenarioDocument, options?: { play?: boolean }): void
+  /** The open Scenario as it stands: starting architecture, seed and every recorded Intervention. */
+  currentScenario(): ScenarioDocument
+  setScenarioName(name: string): void
+  /** Restart the Scenario from time zero with a different seed. */
+  setSeed(seed: number): void
+  showNotice(text: string, tone?: Notice['tone']): void
   addComponent(kind: ComponentKind, position: { x: number; y: number }): void
   removeComponent(id: ComponentId): void
   moveComponent(id: ComponentId, position: { x: number; y: number }): void
@@ -91,7 +119,10 @@ interface SimulationState {
 
   togglePlaying(): void
   setSpeed(speed: Speed): void
-  /** Back to time zero and the starting architecture, keeping where Components sit on the canvas. */
+  /**
+   * Back to time zero and the starting architecture, keeping where Components
+   * sit on the canvas, ready to replay the Scenario's recorded Interventions again.
+   */
   reset(): void
   /** Kill or revive, at the current simulated time, playing or paused. */
   applyIntervention(intervention: Intervention): void
@@ -110,15 +141,18 @@ export function playBlocked(state: Pick<SimulationState, 'engine' | 'interventio
 }
 
 /** A fresh, paused Run of `design`, starting at simulated time zero. */
-function freshRun(design: Design) {
+function freshRun(design: Design, script: TimedIntervention[] = [], placements: Record<ComponentId, Placement> = {}) {
   const engine = createEngine(toScenario(design), { movementCap: MAX_DOTS })
   return {
+    script,
+    pending: script,
+    placements: { ...placements, ...design.layout },
     design,
     startDesign: design,
     problems: validateArchitecture(design.architecture),
     interventions: [] as TimedIntervention[],
     knownIds: new Set(design.architecture.components.map((c) => c.id)) as ReadonlySet<ComponentId>,
-    notice: null,
+    notice: null as Notice | null,
     engine,
     playing: false,
     behind: false,
@@ -128,6 +162,13 @@ function freshRun(design: Design) {
     metrics: [] as MetricSample[],
   }
 }
+
+/** Every Component id a list of Interventions adds. */
+function addedIds(interventions: TimedIntervention[]): ComponentId[] {
+  return interventions.flatMap(({ intervention }) => (intervention.kind === 'addComponent' ? [intervention.component.id] : []))
+}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Blend each worker's average Utilisation over the last frame into its smoothed value. */
 function smoothUtilisation(previous: Snapshot, next: Snapshot, smoothed: Record<ComponentId, number>) {
@@ -157,6 +198,8 @@ function toDot(movement: Movement): Dot {
   }
 }
 
+const defaultScenario = builtInScenarios[0]!
+
 export const useSimulation = create<SimulationState>()((set, get) => {
   /**
    * Apply an edit to the architecture. Before the Run starts this simply
@@ -170,14 +213,15 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     const selectionPatch = selection === undefined ? {} : { selection }
 
     if (!hasStarted(state)) {
-      set({ ...freshRun(design), loadCount: state.loadCount, ...selectionPatch })
+      // Changing the starting architecture makes this the user's own Scenario: nothing recorded is replayed.
+      set({ ...freshRun(design, [], state.placements), loadCount: state.loadCount, ...selectionPatch })
       return
     }
 
     const problems = validateArchitecture(design.architecture)
     const hazard = problems.find(isHazard)
     if (hazard) {
-      set({ notice: `Not applied: ${hazard.message}` })
+      set({ notice: { text: `Not applied: ${hazard.message}`, tone: 'error' } })
       return
     }
     const { engine } = state
@@ -190,14 +234,17 @@ export const useSimulation = create<SimulationState>()((set, get) => {
         if (intervention.kind === 'addComponent') knownIds.add(intervention.component.id)
       }
     } catch (error) {
-      set({ notice: `Not applied: ${error instanceof Error ? error.message : String(error)}` })
+      set({ notice: { text: `Not applied: ${errorText(error)}`, tone: 'error' } })
       return
     }
     set({
       design,
       problems,
       interventions: recorded,
+      // A change of the user's own ends any replay: the rest of the recording is discarded.
+      pending: [],
       knownIds,
+      placements: { ...state.placements, ...design.layout },
       notice: null,
       snapshot: engine.snapshot(),
       ...selectionPatch,
@@ -209,17 +256,60 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     const design = change(get().design)
     // Keep the starting layout in step so a reset does not move things back.
     const startDesign = change(get().startDesign)
-    set({ design, startDesign })
+    set({ design, startDesign, placements: { ...get().placements, ...design.layout } })
   }
 
   return {
-    ...freshRun(starterDesign),
+    ...freshRun(startingDesign(defaultScenario), defaultScenario.interventions, defaultScenario.layout),
+    scenarioName: defaultScenario.name,
+    // The default Scenario tells its story unaided, so it starts playing on load.
+    playing: true,
     selection: null,
     loadCount: 0,
     speed: 1,
 
-    loadDesign(design) {
-      set({ ...freshRun(design), selection: null, loadCount: get().loadCount + 1 })
+    openScenario(scenario, options = {}) {
+      set({
+        ...freshRun(startingDesign(scenario), scenario.interventions, scenario.layout),
+        scenarioName: scenario.name,
+        playing: options.play ?? false,
+        selection: null,
+        loadCount: get().loadCount + 1,
+      })
+    },
+
+    currentScenario() {
+      const { startDesign, design, placements, interventions, pending, scenarioName } = get()
+      const all = [...interventions, ...pending]
+      const layout: Record<ComponentId, Placement> = {}
+      for (const id of [...startDesign.architecture.components.map((c) => c.id), ...addedIds(all)]) {
+        const placement = design.layout[id] ?? placements[id] ?? startDesign.layout[id]
+        if (placement) layout[id] = placement
+      }
+      return {
+        format: SCENARIO_FORMAT,
+        version: SCENARIO_VERSION,
+        name: scenarioName,
+        seed: startDesign.seed,
+        architecture: startDesign.architecture,
+        layout,
+        interventions: all,
+      }
+    },
+
+    setScenarioName(name) {
+      set({ scenarioName: name })
+    },
+
+    setSeed(seed) {
+      const { playing } = get()
+      get().reset()
+      const { startDesign, script, placements, loadCount, selection } = get()
+      set({ ...freshRun({ ...startDesign, seed }, script, placements), loadCount, selection, playing })
+    },
+
+    showNotice(text, tone = 'info') {
+      set({ notice: { text, tone } })
     },
 
     addComponent(kind, position) {
@@ -284,7 +374,7 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     },
 
     reset() {
-      const { startDesign, design, selection, loadCount } = get()
+      const { startDesign, design, selection, loadCount, script, placements } = get()
       // Keep current positions and names for Components that exist at time zero.
       const layout = { ...startDesign.layout }
       for (const id of Object.keys(layout)) {
@@ -296,7 +386,7 @@ export const useSimulation = create<SimulationState>()((set, get) => {
           : selection?.kind === 'connection'
             ? startDesign.architecture.connections.some((c) => c.from === selection.from && c.to === selection.to)
             : true
-      set({ ...freshRun({ ...startDesign, layout }), selection: stillThere ? selection : null, loadCount })
+      set({ ...freshRun({ ...startDesign, layout }, script, placements), selection: stillThere ? selection : null, loadCount })
     },
 
     applyIntervention(intervention) {
@@ -304,10 +394,11 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       try {
         engine.applyIntervention(intervention)
       } catch (error) {
-        set({ notice: `Not applied: ${error instanceof Error ? error.message : String(error)}` })
+        set({ notice: { text: `Not applied: ${errorText(error)}`, tone: 'error' } })
         return
       }
-      set({ snapshot: engine.snapshot(), interventions: [...interventions, { time: engine.time, intervention }] })
+      // A change of the user's own ends any replay.
+      set({ snapshot: engine.snapshot(), interventions: [...interventions, { time: engine.time, intervention }], pending: [] })
     },
 
     tick(realSeconds) {
@@ -315,13 +406,42 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       if (!playing) return
       const target = engine.time + Math.min(realSeconds, MAX_FRAME_SECONDS) * speed
 
+      // Replay recorded Interventions that fall due, each at exactly its recorded time,
+      // so the Run matches the one that was recorded.
+      const state = get()
+      let { design, interventions, knownIds, notice } = state
+      let pending = state.pending
+      const replayDue = (upTo: number) => {
+        while (pending.length > 0 && pending[0]!.time <= upTo) {
+          const [next, ...rest] = pending as [TimedIntervention, ...TimedIntervention[]]
+          engine.advanceTo(next.time)
+          try {
+            engine.applyIntervention(next.intervention)
+          } catch (error) {
+            notice = { text: `Replay stopped: ${errorText(error)}`, tone: 'error' }
+            pending = []
+            return
+          }
+          pending = rest
+          design = applyInterventionToDesign(design, next.intervention, state.placements)
+          interventions = [...interventions, { time: engine.time, intervention: next.intervention }]
+          if (next.intervention.kind === 'addComponent') knownIds = new Set([...knownIds, next.intervention.component.id])
+        }
+      }
+
       // Advance in small chunks until caught up or out of budget; if out of budget the Run
       // simply falls behind the clock rather than freezing the page.
       const started = performance.now()
       while (engine.time < target && performance.now() - started < FRAME_BUDGET_MS) {
-        engine.advanceTo(Math.min(target, engine.time + BUDGET_CHUNK))
+        const chunkEnd = Math.min(target, engine.time + BUDGET_CHUNK)
+        replayDue(chunkEnd)
+        engine.advanceTo(chunkEnd)
       }
       const behind = engine.time < target
+      const replayed =
+        design === state.design
+          ? {}
+          : { design, problems: validateArchitecture(design.architecture), placements: { ...state.placements, ...design.layout } }
 
       const now = engine.time
       const live = dots.filter((dot) => now - dot.startedAt < DOT_TRAVEL_TIME)
@@ -331,6 +451,11 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       const sampled = engine.metrics()
       const metrics = sampled.at(-1)?.time === get().metrics.at(-1)?.time ? get().metrics : sampled
       set({
+        ...replayed,
+        interventions,
+        knownIds,
+        pending,
+        notice,
         metrics,
         snapshot,
         behind,

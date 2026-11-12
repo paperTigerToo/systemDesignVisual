@@ -1,27 +1,42 @@
 import { ReactFlowProvider } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Canvas } from './Canvas'
-import { examples } from './demoArchitectures'
-import { starterDesign } from './design'
 import { MetricsPanel } from './MetricsPanel'
 import { Palette } from './Palette'
+import { ScenarioMenu, SeedControl, useSharedScenarioOnLoad } from './ScenarioMenu'
 import { SettingsPanel } from './SettingsPanel'
 import { hasStarted, playBlocked, SPEEDS, useSimulation } from './simulationStore'
 import { usePlaybackLoop } from './usePlaybackLoop'
 import './styles.css'
 
-const starter = { name: 'Starter: Source, Server, Database', design: starterDesign }
-const empty = { name: 'Empty canvas', design: { seed: 1, architecture: { components: [], connections: [] }, layout: {} } }
-const designs = [starter, ...examples, empty]
+/** Whether recorded Interventions are still being replayed, or the Run is the user's own. */
+function RunStatus() {
+  const toCome = useSimulation((state) => state.pending.length)
+  const changes = useSimulation((state) => state.interventions.length)
+  if (toCome > 0) {
+    return (
+      <span className="run-status run-status--replay" role="status" title="Any change you make stops the replay and continues live.">
+        <span className="run-status__mark" aria-hidden="true">▶▶</span>
+        Replaying · {toCome} recorded {toCome === 1 ? 'change' : 'changes'} to come
+      </span>
+    )
+  }
+  return (
+    <span className="run-status" role="status">
+      <span className="run-status__mark run-status__mark--live" aria-hidden="true" />
+      Live{changes > 0 ? ` · ${changes} ${changes === 1 ? 'change' : 'changes'} recorded` : ''}
+    </span>
+  )
+}
 
-/** Why the last edit during a Run was refused. */
+/** Why the last edit was refused, or confirmation that something worked. */
 function Notice() {
   const notice = useSimulation((state) => state.notice)
   const dismiss = useSimulation((state) => state.dismissNotice)
   if (!notice) return null
   return (
-    <div className="notice" role="alert">
-      <span>{notice}</span>
+    <div className={`notice notice--${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
+      <span>{notice.text}</span>
       <button type="button" className="notice__dismiss" onClick={dismiss} aria-label="Dismiss">
         ×
       </button>
@@ -39,8 +54,6 @@ function Toolbar() {
   const time = useSimulation((state) => state.snapshot.time)
   const started = useSimulation(hasStarted)
   const blocked = useSimulation(playBlocked)
-  const changes = useSimulation((state) => state.interventions.length)
-  const loadDesign = useSimulation((state) => state.loadDesign)
 
   return (
     <header className="toolbar">
@@ -83,37 +96,18 @@ function Toolbar() {
           Running behind
         </span>
       )}
-      {changes > 0 && (
-        <span className="toolbar__changes">
-          {changes} {changes === 1 ? 'change' : 'changes'} recorded
-        </span>
-      )}
-      {/* Ticket 09 replaces this with the Scenario menu. */}
-      <label className="toolbar__picker">
-        <span>Load</span>
-        <select
-          value=""
-          onChange={(event) => {
-            const chosen = designs[Number(event.target.value)]
-            if (chosen) loadDesign(chosen.design)
-          }}
-        >
-          <option value="" disabled>
-            Choose an architecture…
-          </option>
-          {designs.map((entry, index) => (
-            <option key={entry.name} value={index}>
-              {entry.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <RunStatus />
+      <div className="toolbar__end">
+        <ScenarioMenu />
+        <SeedControl />
+      </div>
     </header>
   )
 }
 
 export function App() {
   usePlaybackLoop()
+  useSharedScenarioOnLoad()
   return (
     <ReactFlowProvider>
       <div className="app">

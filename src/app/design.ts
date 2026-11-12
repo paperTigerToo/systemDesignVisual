@@ -1,4 +1,4 @@
-import type { Architecture, ComponentId, ComponentSpec, Scenario } from '../engine'
+import type { Architecture, ComponentId, ComponentSpec, Intervention, Scenario } from '../engine'
 
 /** Where a Component sits on the canvas and what the user calls it. Not part of the engine's Scenario. */
 export interface Placement {
@@ -191,4 +191,38 @@ export const starterDesign: Design = {
     'server-1': { x: 320, y: 0, label: 'Web server' },
     'database-1': { x: 640, y: 0, label: 'Database' },
   },
+}
+
+/**
+ * What an Intervention does to the Design, for replaying a recorded one.
+ * Kill and revive change only the engine's state, not the Design. A Component
+ * added by an Intervention takes its position and name from `placements`.
+ */
+export function applyInterventionToDesign(
+  design: Design,
+  intervention: Intervention,
+  placements: Record<ComponentId, Placement>,
+): Design {
+  switch (intervention.kind) {
+    case 'kill':
+    case 'revive':
+      return design
+    case 'setSetting':
+      return updateSetting(design, intervention.componentId, intervention.key, intervention.value)
+    case 'addComponent': {
+      const spec = intervention.component
+      const placement = placements[spec.id] ?? { x: 0, y: 0, label: spec.id }
+      return {
+        ...design,
+        architecture: { ...design.architecture, components: [...design.architecture.components, spec] },
+        layout: { ...design.layout, [spec.id]: placement },
+      }
+    }
+    case 'removeComponent':
+      return removeComponent(design, intervention.componentId)
+    case 'addConnection':
+      return addConnection(design, intervention.from, intervention.to)
+    case 'removeConnection':
+      return removeConnection(design, intervention.from, intervention.to)
+  }
 }
