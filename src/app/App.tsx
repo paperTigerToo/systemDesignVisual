@@ -3,7 +3,7 @@ import '@xyflow/react/dist/style.css'
 import { Canvas } from './Canvas'
 import { MetricsPanel } from './MetricsPanel'
 import { Palette } from './Palette'
-import { ScenarioMenu, SeedControl, useSharedScenarioOnLoad } from './ScenarioMenu'
+import { ScenarioMenu, SeedControl, useSharedScenarioLinks } from './ScenarioMenu'
 import { SettingsPanel } from './SettingsPanel'
 import { hasStarted, playBlocked, SPEEDS, useSimulation } from './simulationStore'
 import { usePlaybackLoop } from './usePlaybackLoop'
@@ -51,7 +51,9 @@ function Toolbar() {
   const speed = useSimulation((state) => state.speed)
   const setSpeed = useSimulation((state) => state.setSpeed)
   const behind = useSimulation((state) => state.playing && state.behind)
-  const time = useSimulation((state) => state.snapshot.time)
+  // The throttled readout, not the per-frame snapshot: the clock shows tenths of a second,
+  // so redrawing the toolbar every frame would buy nothing.
+  const time = useSimulation((state) => state.readout.snapshot.time)
   const started = useSimulation(hasStarted)
   const blocked = useSimulation(playBlocked)
 
@@ -107,7 +109,7 @@ function Toolbar() {
 
 export function App() {
   usePlaybackLoop()
-  useSharedScenarioOnLoad()
+  useSharedScenarioLinks()
   return (
     <ReactFlowProvider>
       <div className="app">

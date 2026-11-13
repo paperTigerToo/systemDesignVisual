@@ -14,8 +14,16 @@ import {
   type TimedIntervention,
 } from '../engine'
 import { builtInScenarios } from './builtInScenarios'
-import * as edits from './design'
-import { applyInterventionToDesign, toScenario, type ComponentKind, type Design, type Placement } from './design'
+import {
+  applyInterventionToDesign,
+  moveComponent,
+  newComponent,
+  renameComponent,
+  toScenario,
+  type ComponentKind,
+  type Design,
+  type Placement,
+} from './design'
 import { SCENARIO_FORMAT, SCENARIO_VERSION, startingDesign, type ScenarioDocument } from './scenario'
 
 /** How long, in simulated seconds, a dot takes to cross a Connection. Purely cosmetic. */
@@ -131,7 +139,7 @@ interface SimulationState {
   removeComponent(id: ComponentId): void
   moveComponent(id: ComponentId, position: { x: number; y: number }): void
   renameComponent(id: ComponentId, label: string): void
-  updateSetting(id: ComponentId, key: string, value: number): void
+  updateSetting(id: ComponentId, key: SettingKey, value: number): void
   addConnection(from: ComponentId, to: ComponentId): void
   removeConnection(from: ComponentId, to: ComponentId): void
   select(selection: Selection): void
@@ -223,19 +231,26 @@ const defaultScenario = builtInScenarios[0]!
 
 export const useSimulation = create<SimulationState>()((set, get) => {
   /**
-   * Apply an edit to the architecture. Before the Run starts this simply
-   * rebuilds the engine. Once it has started the edit becomes Interventions
-   * applied live at the current simulated time, unless the resulting
-   * architecture would have a hazard, in which case it is refused with a reason.
+   * Apply an edit to the architecture, described as the Intervention it is, so a
+   * live edit changes the Design exactly as replaying the recording later will.
+   * Before the Run starts this simply rebuilds the engine. Once it has started
+   * the Intervention is applied live at the current simulated time, unless the
+   * resulting architecture would have a hazard, in which case it is refused with
+   * a reason. `placements` carries where a Component being added goes.
    */
-  const editArchitecture = (design: Design, interventions: Intervention[], selection?: Selection) => {
+  const editArchitecture = (
+    intervention: Intervention,
+    options: { selection?: Selection; placements?: Record<ComponentId, Placement> } = {},
+  ) => {
     const state = get()
+    const placements = options.placements ?? state.placements
+    const design = applyInterventionToDesign(state.design, intervention, placements)
     if (design === state.design) return
-    const selectionPatch = selection === undefined ? {} : { selection }
+    const selectionPatch = options.selection === undefined ? {} : { selection: options.selection }
 
     if (!hasStarted(state)) {
       // Changing the starting architecture makes this the user's own Scenario: nothing recorded is replayed.
-      set({ ...freshRun(design, [], state.placements), loadCount: state.loadCount, ...selectionPatch })
+      set({ ...freshRun(design, [], placements), loadCount: state.loadCount, ...selectionPatch })
       return
     }
 
@@ -246,31 +261,47 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       return
     }
     const { engine } = state
-    const knownIds = new Set(state.knownIds)
-    const recorded = [...state.interventions]
     try {
-      for (const intervention of interventions) {
-        engine.applyIntervention(intervention)
-        recorded.push({ time: engine.time, intervention })
-        if (intervention.kind === 'addComponent') knownIds.add(intervention.component.id)
-      }
+      engine.applyIntervention(intervention)
     } catch (error) {
       set({ notice: { text: `Not applied: ${errorText(error)}`, tone: 'error' } })
       return
     }
+    const snapshot = engine.snapshot()
     set({
       design,
       problems,
-      interventions: recorded,
+      interventions: [...state.interventions, { time: engine.time, intervention }],
       // A change of the user's own ends any replay: the rest of the recording is discarded.
       pending: [],
-      knownIds,
-      placements: { ...state.placements, ...design.layout },
+      knownIds: intervention.kind === 'addComponent' ? new Set([...state.knownIds, intervention.component.id]) : state.knownIds,
+      placements: { ...placements, ...design.layout },
       notice: null,
-      snapshot: engine.snapshot(),
-      readout: readoutOf(engine.snapshot(), state.recentUtilisation),
+      snapshot,
+      readout: readoutOf(snapshot, state.recentUtilisation),
       ...selectionPatch,
     })
+  }
+
+  /**
+   * Back to time zero and the starting architecture with `seed`, keeping where
+   * Components sit and what is selected (if it still exists), ready to replay the
+   * Scenario's recorded Interventions again. Paused.
+   */
+  const restart = (seed: number) => {
+    const { startDesign, design, selection, loadCount, script, placements } = get()
+    // Keep current positions and names for Components that exist at time zero.
+    const layout = { ...startDesign.layout }
+    for (const id of Object.keys(layout)) {
+      if (design.layout[id]) layout[id] = design.layout[id]
+    }
+    const stillThere =
+      selection?.kind === 'component'
+        ? startDesign.architecture.components.some((c) => c.id === selection.id)
+        : selection?.kind === 'connection'
+          ? startDesign.architecture.connections.some((c) => c.from === selection.from && c.to === selection.to)
+          : true
+    set({ ...freshRun({ ...startDesign, layout, seed }, script, placements), selection: stillThere ? selection : null, loadCount })
   }
 
   /** Apply an edit that only changes the layout or names: never an Intervention. */
@@ -325,9 +356,8 @@ export const useSimulation = create<SimulationState>()((set, get) => {
 
     setSeed(seed) {
       const { playing } = get()
-      get().reset()
-      const { startDesign, script, placements, loadCount, selection } = get()
-      set({ ...freshRun({ ...startDesign, seed }, script, placements), loadCount, selection, playing })
+      restart(seed)
+      set({ playing })
     },
 
     showNotice(text, tone = 'info') {
@@ -335,46 +365,40 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     },
 
     addComponent(kind, position) {
-      const { design, id, spec } = edits.addComponent(get().design, kind, position, get().knownIds)
-      editArchitecture(design, [{ kind: 'addComponent', component: spec }], { kind: 'component', id })
+      const { design, knownIds, placements } = get()
+      const { spec, placement } = newComponent(design, kind, position, knownIds)
+      editArchitecture(
+        { kind: 'addComponent', component: spec },
+        { selection: { kind: 'component', id: spec.id }, placements: { ...placements, [spec.id]: placement } },
+      )
     },
 
     removeComponent(id) {
       const selection = get().selection
       const wasSelected = selection?.kind === 'component' && selection.id === id
-      editArchitecture(
-        edits.removeComponent(get().design, id),
-        [{ kind: 'removeComponent', componentId: id }],
-        wasSelected ? null : undefined,
-      )
+      editArchitecture({ kind: 'removeComponent', componentId: id }, { selection: wasSelected ? null : undefined })
     },
 
     moveComponent(id, position) {
-      editLayout((design) => edits.moveComponent(design, id, position))
+      editLayout((design) => moveComponent(design, id, position))
     },
 
     renameComponent(id, label) {
-      editLayout((design) => edits.renameComponent(design, id, label))
+      editLayout((design) => renameComponent(design, id, label))
     },
 
     updateSetting(id, key, value) {
-      editArchitecture(edits.updateSetting(get().design, id, key, value), [
-        { kind: 'setSetting', componentId: id, key: key as SettingKey, value },
-      ])
+      editArchitecture({ kind: 'setSetting', componentId: id, key, value })
     },
 
     addConnection(from, to) {
-      editArchitecture(edits.addConnection(get().design, from, to), [{ kind: 'addConnection', from, to }])
+      editArchitecture({ kind: 'addConnection', from, to })
     },
 
     removeConnection(from, to) {
       const selection = get().selection
       const wasSelected = selection?.kind === 'connection' && selection.from === from && selection.to === to
-      editArchitecture(
-        edits.removeConnection(get().design, from, to),
-        [{ kind: 'removeConnection', from, to }],
-        wasSelected ? null : undefined,
-      )
+      editArchitecture({ kind: 'removeConnection', from, to }, { selection: wasSelected ? null : undefined })
     },
 
     select(selection) {
@@ -388,7 +412,10 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     togglePlaying() {
       const state = get()
       if (!state.playing && playBlocked(state)) return
-      set({ playing: !state.playing, behind: false })
+      // On pause, bring the throttled readout up to the moment the Run stopped, so the
+      // numbers on the Components match the clock and the charts.
+      const readout = state.playing ? readoutOf(state.snapshot, state.recentUtilisation) : state.readout
+      set({ playing: !state.playing, behind: false, readout })
     },
 
     setSpeed(speed) {
@@ -396,19 +423,7 @@ export const useSimulation = create<SimulationState>()((set, get) => {
     },
 
     reset() {
-      const { startDesign, design, selection, loadCount, script, placements } = get()
-      // Keep current positions and names for Components that exist at time zero.
-      const layout = { ...startDesign.layout }
-      for (const id of Object.keys(layout)) {
-        if (design.layout[id]) layout[id] = design.layout[id]
-      }
-      const stillThere =
-        selection?.kind === 'component'
-          ? startDesign.architecture.components.some((c) => c.id === selection.id)
-          : selection?.kind === 'connection'
-            ? startDesign.architecture.connections.some((c) => c.from === selection.from && c.to === selection.to)
-            : true
-      set({ ...freshRun({ ...startDesign, layout }, script, placements), selection: stillThere ? selection : null, loadCount })
+      restart(get().startDesign.seed)
     },
 
     applyIntervention(intervention) {

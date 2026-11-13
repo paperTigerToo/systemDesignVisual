@@ -521,25 +521,17 @@ export function createEngine(scenario: Scenario, options: EngineOptions = {}): E
     const source = sources.get(id)
     const worker = workers.get(id)
     const queue = queues.get(id)
-    if (source && !source.removed) {
-      // Requests already sent carry on; their Outcomes land on the removed Source's state.
-      source.removed = true
-      source.generation++
-    } else if (worker && !worker.removed) {
-      killWorker(worker)
-      worker.removed = true
-    } else if (queue && !queue.removed) {
-      killQueue(queue)
-      queue.removed = true
-    } else {
-      throw new Error(`No such Component: ${id}`)
-    }
-    for (const other of order) {
-      if (other === id) continue
-      disconnect(other, id)
-    }
-    const own = source ?? worker ?? queue!
+    const own = source ?? worker ?? queue
+    if (!own || own.removed) throw new Error(`No such Component: ${id}`)
+    // Requests already sent carry on; their Outcomes land on the removed Component's state.
+    if (source) source.generation++
+    else if (worker) killWorker(worker)
+    else if (queue) killQueue(queue)
+    // Disconnect while it still counts as present: `disconnect` ignores a removed caller,
+    // and a Queue's outgoing Connections must also leave its targets' feeder lists.
+    for (const other of order) if (other !== id) disconnect(other, id)
     for (const target of [...own.route.targets]) disconnect(id, target)
+    own.removed = true
     feeders.delete(id)
     order = order.filter((other) => other !== id)
   }

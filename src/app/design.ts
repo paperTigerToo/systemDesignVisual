@@ -1,4 +1,4 @@
-import type { Architecture, ComponentId, ComponentSpec, Intervention, Scenario } from '../engine'
+import type { Architecture, ComponentId, ComponentSpec, Intervention, Scenario, SettingKey } from '../engine'
 
 /** Where a Component sits on the canvas and what the user calls it. Not part of the engine's Scenario. */
 export interface Placement {
@@ -39,7 +39,7 @@ export function defaultSpec(kind: ComponentKind, id: ComponentId): ComponentSpec
 
 /** A numeric setting the settings panel can edit, with its limits. */
 export interface SettingField {
-  key: string
+  key: SettingKey
   label: string
   /** Shown next to the input; the stored value is multiplied by `scale` for display. */
   unit: string
@@ -68,6 +68,11 @@ export const settingFields: Record<ComponentKind, SettingField[]> = {
   queue: [{ key: 'capacity', label: 'Capacity', unit: 'req', scale: 1, min: 1, max: 1_000_000, step: 1, whole: true }],
 }
 
+/** The stored value of one of `component`'s settings; undefined if its kind has no such setting. */
+export function settingValue(component: ComponentSpec, key: SettingKey): number | undefined {
+  return (component as Partial<Record<SettingKey, number>>)[key]
+}
+
 /** Bring a displayed value back to a stored one, within the field's limits. */
 export function clampSetting(field: SettingField, displayed: number): number {
   const clamped = Math.min(Math.max(displayed, field.min), field.max)
@@ -93,20 +98,17 @@ function nextLabel(design: Design, kind: ComponentKind): string {
   return `${kindLabel[kind]} ${count + 1}`
 }
 
-export function addComponent(
+/**
+ * A Component of `kind` ready to add: an id not used by the design or listed in
+ * `alsoTaken`, default settings, and a placement at `position`.
+ */
+export function newComponent(
   design: Design,
   kind: ComponentKind,
   position: { x: number; y: number },
   alsoTaken: ReadonlySet<ComponentId> = new Set(),
-) {
-  const id = nextId(design, kind, alsoTaken)
-  const spec = defaultSpec(kind, id)
-  const next: Design = {
-    ...design,
-    architecture: { ...design.architecture, components: [...design.architecture.components, spec] },
-    layout: { ...design.layout, [id]: { ...position, label: nextLabel(design, kind) } },
-  }
-  return { design: next, id, spec }
+): { spec: ComponentSpec; placement: Placement } {
+  return { spec: defaultSpec(kind, nextId(design, kind, alsoTaken)), placement: { ...position, label: nextLabel(design, kind) } }
 }
 
 export function removeComponent(design: Design, id: ComponentId): Design {
@@ -133,7 +135,7 @@ export function renameComponent(design: Design, id: ComponentId, label: string):
   return { ...design, layout: { ...design.layout, [id]: { ...placement, label } } }
 }
 
-export function updateSetting(design: Design, id: ComponentId, key: string, value: number): Design {
+export function updateSetting(design: Design, id: ComponentId, key: SettingKey, value: number): Design {
   return {
     ...design,
     architecture: {

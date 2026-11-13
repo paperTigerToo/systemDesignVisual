@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { validateArchitecture } from '../engine'
 import {
-  addComponent,
   addConnection,
+  applyInterventionToDesign,
   clampSetting,
+  newComponent,
   removeComponent,
   settingFields,
   starterDesign,
@@ -16,15 +17,22 @@ describe('editing a Design', () => {
   })
 
   it('adds Components with unique ids and default settings', () => {
-    const first = addComponent(starterDesign, 'server', { x: 1, y: 2 })
-    const second = addComponent(first.design, 'server', { x: 3, y: 4 })
-    expect(first.id).toBe('server-2')
-    expect(second.id).toBe('server-3')
-    expect(second.design.layout['server-3']).toEqual({ x: 3, y: 4, label: 'Server 3' })
-    expect(second.design.architecture.components.find((c) => c.id === 'server-3')).toMatchObject({
+    const add = (design: typeof starterDesign, position: { x: number; y: number }) => {
+      const { spec, placement } = newComponent(design, 'server', position)
+      return applyInterventionToDesign(design, { kind: 'addComponent', component: spec }, { [spec.id]: placement })
+    }
+    const first = add(starterDesign, { x: 1, y: 2 })
+    const second = add(first, { x: 3, y: 4 })
+    expect(first.architecture.components.at(-1)!.id).toBe('server-2')
+    expect(second.layout['server-3']).toEqual({ x: 3, y: 4, label: 'Server 3' })
+    expect(second.architecture.components.find((c) => c.id === 'server-3')).toMatchObject({
       kind: 'server',
       concurrency: 4,
     })
+  })
+
+  it('never reuses an id retired earlier in the Run', () => {
+    expect(newComponent(starterDesign, 'server', { x: 0, y: 0 }, new Set(['server-2'])).spec.id).toBe('server-3')
   })
 
   it('removes a Component together with its Connections and placement', () => {

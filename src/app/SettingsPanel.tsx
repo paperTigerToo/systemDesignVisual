@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ComponentSpec } from '../engine'
-import { clampSetting, kindLabel, settingFields, type SettingField } from './design'
+import { clampSetting, kindLabel, settingFields, settingValue, type SettingField } from './design'
 import { hasStarted, useSimulation } from './simulationStore'
 
 function NumberSetting({ component, field }: { component: ComponentSpec; field: SettingField }) {
-  const stored = (component as unknown as Record<string, number>)[field.key] ?? 0
+  const stored = settingValue(component, field.key) ?? 0
   const displayed = Number((stored * field.scale).toFixed(6))
   // Keep what the user is typing until it is a usable number; snap to limits on blur.
   const [draft, setDraft] = useState<string | null>(null)
@@ -59,7 +59,7 @@ function ComponentSettings({ component }: { component: ComponentSpec }) {
   const problems = useSimulation(useShallow((state) => state.problems.filter((p) => p.componentId === component.id)))
 
   return (
-    <section className="settings" key={component.id}>
+    <section className="settings">
       <div className="settings__kind">{kindLabel[component.kind]}</div>
       <label className="setting">
         <span className="setting__label">Name</span>

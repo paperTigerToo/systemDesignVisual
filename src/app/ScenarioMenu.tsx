@@ -14,24 +14,36 @@ function shareParamFromLocation(): string | null {
   return fragment.get(SHARE_PARAM)
 }
 
-/** Open a Scenario carried in the address bar, if there is one; otherwise keep the default. */
-export function useSharedScenarioOnLoad() {
+/**
+ * Open a Scenario carried in the address bar: on load, and when a share link is
+ * pasted into a tab that already has the app open (only the fragment changes, so
+ * the page does not reload). Without one, the default Scenario stays.
+ */
+export function useSharedScenarioLinks() {
   useEffect(() => {
-    const param = shareParamFromLocation()
-    if (!param) return
-    let cancelled = false
-    void scenarioFromUrlParam(param).then((result) => {
-      if (cancelled) return
-      const { openScenario, showNotice } = useSimulation.getState()
-      if (result.ok) {
-        openScenario(result.scenario, { play: true })
-      } else {
-        clearShareFragment()
-        showNotice(`This share link could not be opened. ${result.error} Showing the default Scenario instead.`, 'error')
-      }
-    })
+    let latest = 0
+    const openFromLocation = () => {
+      const param = shareParamFromLocation()
+      if (!param) return
+      const attempt = ++latest
+      void scenarioFromUrlParam(param).then((result) => {
+        // Unmounted, or a newer link arrived while this one was decoding.
+        if (attempt !== latest) return
+        const { openScenario, showNotice } = useSimulation.getState()
+        if (result.ok) {
+          openScenario(result.scenario, { play: true })
+        } else {
+          clearShareFragment()
+          showNotice(`This share link could not be opened. ${result.error}`, 'error')
+        }
+      })
+    }
+    openFromLocation()
+    // The app's own replaceState calls do not fire this, only navigation by the user.
+    window.addEventListener('hashchange', openFromLocation)
     return () => {
-      cancelled = true
+      latest++
+      window.removeEventListener('hashchange', openFromLocation)
     }
   }, [])
 }

@@ -1,5 +1,5 @@
-import type { Architecture, ComponentId, ComponentSpec, Intervention, SettingKey, TimedIntervention } from '../engine'
-import { settingFields, type Design, type Placement } from './design'
+import type { Architecture, ComponentId, ComponentSpec, Intervention, TimedIntervention } from '../engine'
+import { settingFields, type Design, type Placement, type SettingField } from './design'
 
 /**
  * A Scenario as saved, exported and shared: the starting architecture with
@@ -61,9 +61,8 @@ function id(value: unknown, where: string): ComponentId {
 }
 
 /** Check one setting against the same limits the settings panel enforces. */
-function setting(kind: ComponentSpec['kind'], key: string, value: unknown, where: string): number {
-  const field = settingFields[kind].find((f) => f.key === key)
-  if (!field) fail(`${where}: a ${kind} has no setting "${key}".`)
+function setting(field: SettingField, value: unknown, where: string): number {
+  const { key } = field
   const number = finiteNumber(value, `${where} ${key}`)
   const stored = { min: field.min / field.scale, max: field.max / field.scale }
   if (number < stored.min || number > stored.max) fail(`${where} ${key} must be between ${stored.min} and ${stored.max}.`)
@@ -80,7 +79,7 @@ function component(value: unknown, where: string): ComponentSpec {
   }
   const label = `${where} (${componentId})`
   const settings: Record<string, number> = {}
-  for (const field of settingFields[kind]) settings[field.key] = setting(kind, field.key, value[field.key], label)
+  for (const field of settingFields[kind]) settings[field.key] = setting(field, value[field.key], label)
   return { kind, id: componentId, ...settings } as ComponentSpec
 }
 
@@ -99,8 +98,9 @@ function intervention(value: unknown, where: string, kinds: Map<ComponentId, Com
     case 'setSetting': {
       const componentId = id(value.componentId, `${where} componentId`)
       const kind = kinds.get(componentId) ?? fail(`${where} changes ${componentId}, which is never added.`)
-      const key = text(value.key, `${where} key`) as SettingKey
-      return { kind: 'setSetting', componentId, key, value: setting(kind, key, value.value, where) }
+      const key = text(value.key, `${where} key`)
+      const field = settingFields[kind].find((f) => f.key === key) ?? fail(`${where}: a ${kind} has no setting "${key}".`)
+      return { kind: 'setSetting', componentId, key: field.key, value: setting(field, value.value, where) }
     }
     case 'addComponent':
       return { kind: 'addComponent', component: component(value.component, `${where} component`) }

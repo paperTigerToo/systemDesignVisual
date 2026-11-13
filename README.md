@@ -63,7 +63,7 @@ npm test
 
 ## Deployment
 
-Every push to the main branch runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It installs dependencies, runs the tests, builds with the base path set to the repository name, and publishes to GitHub Pages. A failing test stops the workflow before anything is built or deployed.
+Every push to the main branch runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It installs dependencies, runs the tests, builds with the base path set to the repository name (or the root, for a `<owner>.github.io` repository), and publishes to GitHub Pages. A failing test stops the workflow before anything is built or deployed.
 
 ## Built with
 

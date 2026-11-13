@@ -6,12 +6,31 @@ import { DOT_TRAVEL_TIME, useSimulation, type Dot } from './simulationStore'
 /** Where each Connection is drawn, in flow coordinates, keyed by `from>to`. Kept up to date by the edges. */
 const geometry = new Map<string, { sourceX: number; sourceY: number; targetX: number; targetY: number }>()
 
+/** Redraws the mounted DotLayer from the current store state; null when none is mounted. */
+let redraw: (() => void) | null = null
+let redrawFrame = 0
+
+/**
+ * A Connection moved. While playing, the next frame redraws the dots anyway, but while
+ * paused nothing else would, so dots would be left behind when a Component is dragged.
+ * Every moved edge in one render shares a single redraw on the next animation frame.
+ */
+function geometryChanged() {
+  if (!redraw || redrawFrame) return
+  redrawFrame = requestAnimationFrame(() => {
+    redrawFrame = 0
+    redraw?.()
+  })
+}
+
 export function setConnectionGeometry(from: ComponentId, to: ComponentId, line: { sourceX: number; sourceY: number; targetX: number; targetY: number }) {
   geometry.set(`${from}>${to}`, line)
+  geometryChanged()
 }
 
 export function clearConnectionGeometry(from: ComponentId, to: ComponentId) {
   geometry.delete(`${from}>${to}`)
+  geometryChanged()
 }
 
 const SIZE = 6
@@ -61,11 +80,20 @@ export function DotLayer() {
       }
     }
 
-    const initial = useSimulation.getState()
-    draw(initial.dots, initial.snapshot.time)
-    return useSimulation.subscribe((state, previous) => {
+    redraw = () => {
+      const { dots, snapshot } = useSimulation.getState()
+      draw(dots, snapshot.time)
+    }
+    redraw()
+    const unsubscribe = useSimulation.subscribe((state, previous) => {
       if (state.dots !== previous.dots || state.snapshot.time !== previous.snapshot.time) draw(state.dots, state.snapshot.time)
     })
+    return () => {
+      unsubscribe()
+      redraw = null
+      cancelAnimationFrame(redrawFrame)
+      redrawFrame = 0
+    }
   }, [])
 
   return (

@@ -104,6 +104,33 @@ describe('replay', () => {
     expect(store().currentScenario()).toEqual(moreServersDidNotFixIt)
   })
 
+  it('a live edit leaves the Design exactly as replaying its recording does', () => {
+    store().openScenario(starting, { play: true })
+    frames(40)
+    store().addComponent('queue', { x: 300, y: 250 })
+    store().addConnection('source-1', 'queue-1')
+    store().addConnection('queue-1', 'database-1')
+    store().updateSetting('database-1', 'workTime', 0.02)
+    frames(20)
+    store().removeComponent('server-1')
+    frames(20)
+    const live = store().design
+    expect(live.architecture.components.map((c) => c.id)).toEqual(['source-1', 'database-1', 'queue-1'])
+
+    store().openScenario(store().currentScenario(), { play: true })
+    frames(80)
+    expect(store().pending).toEqual([])
+    expect(store().design).toEqual(live)
+  })
+
+  it('pausing brings the numbers on the Components up to the moment the Run stopped', () => {
+    store().openScenario(starting, { play: true })
+    frames(30)
+    store().togglePlaying()
+    expect(store().playing).toBe(false)
+    expect(store().readout.snapshot).toBe(store().snapshot)
+  })
+
   it('a new seed restarts the Run with the same recording', () => {
     store().openScenario(moreServersDidNotFixIt, { play: true })
     frames(20)

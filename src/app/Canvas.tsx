@@ -7,6 +7,7 @@ import {
   type Connection,
   type EdgeChange,
   type NodeChange,
+  type OnDelete,
 } from '@xyflow/react'
 import { useCallback, useEffect, useMemo, type DragEvent } from 'react'
 import { edgeTypes, type ConnectionEdgeType } from './ConnectionEdge'
@@ -81,7 +82,6 @@ export function Canvas() {
     const store = useSimulation.getState()
     for (const change of changes) {
       if (change.type === 'position' && change.position) store.moveComponent(change.id, change.position)
-      else if (change.type === 'remove') store.removeComponent(change.id)
       else if (change.type === 'select') {
         const current = useSimulation.getState().selection
         if (change.selected) store.select({ kind: 'component', id: change.id })
@@ -95,15 +95,26 @@ export function Canvas() {
     const connections = store.design.architecture.connections
     const find = (id: string) => connections.find((c) => connectionId(c.from, c.to) === id)
     for (const change of changes) {
-      const connection = change.type === 'add' ? undefined : find(change.id)
+      // Only selection is handled here; removals go through onDelete.
+      if (change.type !== 'select') continue
+      const connection = find(change.id)
       if (!connection) continue
-      if (change.type === 'remove') store.removeConnection(connection.from, connection.to)
-      else if (change.type === 'select') {
-        const current = useSimulation.getState().selection
-        const isCurrent = current?.kind === 'connection' && current.from === connection.from && current.to === connection.to
-        if (change.selected) store.select({ kind: 'connection', ...connection })
-        else if (isCurrent) store.select(null)
-      }
+      const current = useSimulation.getState().selection
+      const isCurrent = current?.kind === 'connection' && current.from === connection.from && current.to === connection.to
+      if (change.selected) store.select({ kind: 'connection', ...connection })
+      else if (isCurrent) store.select(null)
+    }
+  }, [])
+
+  // Deletions arrive here all at once rather than as separate node and edge changes, which
+  // React Flow sends edges first: a Component's own Connections go with it in one
+  // Intervention instead of each being recorded as a removal of its own.
+  const onDelete = useCallback<OnDelete<ComponentNode, ConnectionEdgeType>>(({ nodes, edges }) => {
+    const store = useSimulation.getState()
+    const removed = new Set(nodes.map((node) => node.id))
+    for (const id of removed) store.removeComponent(id)
+    for (const edge of edges) {
+      if (!removed.has(edge.source) && !removed.has(edge.target)) store.removeConnection(edge.source, edge.target)
     }
   }, [])
 
@@ -138,6 +149,7 @@ export function Canvas() {
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onDelete={onDelete}
         onConnect={onConnect}
         onPaneClick={() => useSimulation.getState().select(null)}
         deleteKeyCode={['Backspace', 'Delete']}

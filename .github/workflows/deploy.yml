@@ -27,9 +27,11 @@ jobs:
       - run: npm ci
       # A failing test stops the job here, so nothing is built or deployed.
       - run: npm test
+      # A project site is served under /<repository>/; a user or organisation site
+      # (a repository named <owner>.github.io) is served from the root.
       - run: npm run build
         env:
-          BASE_PATH: /${{ github.event.repository.name }}/
+          BASE_PATH: ${{ endsWith(github.event.repository.name, '.github.io') && '/' || format('/{0}/', github.event.repository.name) }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
