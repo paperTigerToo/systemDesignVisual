@@ -15,6 +15,15 @@ const REJECTION_MEMORY = 1
 
 type Status = 'idle' | 'healthy' | 'busy' | 'overloaded' | 'killed'
 
+/** A shape for each status, so it reads without colour too. */
+const statusGlyph: Record<Status, string> = {
+  idle: '',
+  healthy: '✓',
+  busy: '▲',
+  overloaded: '✖',
+  killed: '⊘',
+}
+
 const statusLabel: Record<Status, string> = {
   idle: '',
   healthy: 'Healthy',
@@ -33,8 +42,14 @@ function statusOf(worker: WorkerSnapshot, recentUtilisation: number, time: numbe
   return 'healthy'
 }
 
+// Components read the throttled readout, not the per-frame snapshot, so the canvas
+// re-renders a few times a second instead of every Component on every frame.
 function useComponentSnapshot(id: string) {
-  return useSimulation((state) => state.snapshot.components[id])
+  return useSimulation((state) => state.readout.snapshot.components[id])
+}
+
+function useReadoutTime() {
+  return useSimulation((state) => state.readout.snapshot.time)
 }
 
 function formatLatency(seconds: number | null): string {
@@ -69,7 +84,14 @@ function ComponentFrame({
       <Handle type="target" position={Position.Left} />
       <div className="component__header">
         <div className="component__kind">{kind}</div>
-        {statusLabel[status] && <div className={`status status--${status}`}>{statusLabel[status]}</div>}
+        {statusLabel[status] && (
+          <div className={`status status--${status}`}>
+            <span className="status__glyph" aria-hidden="true">
+              {statusGlyph[status]}
+            </span>
+            {statusLabel[status]}
+          </div>
+        )}
       </div>
       <div className="component__name">{data.label}</div>
       {hasProblems && (
@@ -150,8 +172,8 @@ function KillButton({ id, killed }: { id: string; killed: boolean }) {
 
 function WorkerNode({ id, data, kindLabel }: NodeProps<ComponentNode> & { kindLabel: string }) {
   const snapshot = useComponentSnapshot(id)
-  const time = useSimulation((state) => state.snapshot.time)
-  const recentUtilisation = useSimulation((state) => state.recentUtilisation[id] ?? 0)
+  const time = useReadoutTime()
+  const recentUtilisation = useSimulation((state) => state.readout.utilisation[id] ?? 0)
   const callsDownstream = useSimulation((state) =>
     state.design.architecture.connections.some((connection) => connection.from === id),
   )
@@ -199,7 +221,7 @@ function queueStatusOf(queue: QueueSnapshot, time: number): Status {
 
 export function QueueNode({ id, data }: NodeProps<ComponentNode>) {
   const snapshot = useComponentSnapshot(id)
-  const time = useSimulation((state) => state.snapshot.time)
+  const time = useReadoutTime()
   if (snapshot?.kind !== 'queue') return null
   const status = queueStatusOf(snapshot, time)
 

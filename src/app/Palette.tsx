@@ -2,6 +2,7 @@ import { useReactFlow } from '@xyflow/react'
 import type { DragEvent } from 'react'
 import { kindLabel, type ComponentKind } from './design'
 import { useSimulation } from './simulationStore'
+import { ThemePicker } from './ThemePicker'
 
 export const PALETTE_DRAG_TYPE = 'application/x-system-design-component'
 
@@ -54,6 +55,9 @@ export function Palette() {
           <span className="palette__hint">{hint}</span>
         </button>
       ))}
+      <div className="palette__footer">
+        <ThemePicker />
+      </div>
     </aside>
   )
 }

@@ -1,14 +1,15 @@
 import { BaseEdge, getStraightPath, type Edge, type EdgeProps } from '@xyflow/react'
-import { useShallow } from 'zustand/react/shallow'
-import { DOT_TRAVEL_TIME, useSimulation } from './simulationStore'
+import { memo, useLayoutEffect } from 'react'
+import { clearConnectionGeometry, setConnectionGeometry } from './DotLayer'
 
 export type ConnectionEdgeType = Edge<{ problem: boolean }, 'connection'>
 
 /**
- * A Connection drawn as a straight arrow with sampled Requests moving along it:
- * calls travel from caller to callee, responses travel back the other way.
+ * A Connection drawn as a straight arrow. It re-renders only when it moves or its
+ * state changes; the Requests travelling along it are drawn by the DotLayer, which
+ * reads where this line is from the geometry registered here.
  */
-export function ConnectionEdge({
+export const ConnectionEdge = memo(function ConnectionEdge({
   id,
   source,
   target,
@@ -21,36 +22,19 @@ export function ConnectionEdge({
   markerEnd,
 }: EdgeProps<ConnectionEdgeType>) {
   const [path] = getStraightPath({ sourceX, sourceY, targetX, targetY })
-  const time = useSimulation((state) => state.snapshot.time)
-  const dots = useSimulation(
-    useShallow((state) =>
-      state.dots.filter(
-        (dot) =>
-          (dot.direction === 'call' && dot.from === source && dot.to === target) ||
-          (dot.direction === 'response' && dot.from === target && dot.to === source),
-      ),
-    ),
-  )
+
+  useLayoutEffect(() => {
+    setConnectionGeometry(source, target, { sourceX, sourceY, targetX, targetY })
+  }, [source, target, sourceX, sourceY, targetX, targetY])
+  useLayoutEffect(() => () => clearConnectionGeometry(source, target), [source, target])
+
   const className = [
     'connection',
     data?.problem ? 'connection--problem' : '',
     selected ? 'connection--selected' : '',
   ].join(' ')
 
-  return (
-    <>
-      <BaseEdge id={id} path={path} className={className} markerEnd={markerEnd} interactionWidth={16} />
-      {dots.map((dot) => {
-        const travelled = Math.min(Math.max((time - dot.startedAt) / DOT_TRAVEL_TIME, 0), 1)
-        const progress = dot.direction === 'call' ? travelled : 1 - travelled
-        const x = sourceX + (targetX - sourceX) * progress
-        // Responses ride slightly below the line so the two directions stay readable.
-        const y = sourceY + (targetY - sourceY) * progress + (dot.direction === 'response' ? 6 : -6)
-        const dotClass = `request-dot request-dot--${dot.direction}${dot.bad ? ' request-dot--bad' : ''}`
-        return <circle key={dot.key} className={dotClass} r={3.5} cx={x} cy={y} />
-      })}
-    </>
-  )
-}
+  return <BaseEdge id={id} path={path} className={className} markerEnd={markerEnd} interactionWidth={16} />
+})
 
 export const edgeTypes = { connection: ConnectionEdge }

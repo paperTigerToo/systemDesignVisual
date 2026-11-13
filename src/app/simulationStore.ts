@@ -28,6 +28,8 @@ const MAX_FRAME_SECONDS = 0.1
 const FRAME_BUDGET_MS = 10
 /** Simulated seconds advanced between checks of the frame budget. */
 const BUDGET_CHUNK = 0.02
+/** Wall-clock milliseconds between refreshes of the numbers drawn on Components while playing. */
+const READOUT_INTERVAL_MS = 100
 /** Time constant, in simulated seconds, of the smoothing applied to Utilisation for status colours. */
 const UTILISATION_SMOOTHING = 1
 
@@ -42,6 +44,22 @@ export interface Dot {
   /** True for a response carrying a Rejected or Failed Outcome. */
   bad: boolean
   startedAt: number
+}
+
+/**
+ * What the Components on the canvas draw: a snapshot and smoothed Utilisation,
+ * refreshed a few times a second while playing rather than every frame, so the
+ * canvas does not re-render every Component on every frame.
+ */
+export interface Readout {
+  snapshot: Snapshot
+  utilisation: Record<ComponentId, number>
+  /** performance.now() when this readout was taken. */
+  takenAt: number
+}
+
+function readoutOf(snapshot: Snapshot, utilisation: Record<ComponentId, number> = {}): Readout {
+  return { snapshot, utilisation, takenAt: performance.now() }
 }
 
 /** A message along the top: why something was refused, or confirmation that something worked. */
@@ -96,6 +114,8 @@ interface SimulationState {
    * second of simulated time, so status colours do not flicker.
    */
   recentUtilisation: Record<ComponentId, number>
+  /** The throttled view of `snapshot` and `recentUtilisation` that Components draw. */
+  readout: Readout
   /** Metric samples over roughly the last 30 simulated seconds, oldest first. */
   metrics: MetricSample[]
 
@@ -157,6 +177,7 @@ function freshRun(design: Design, script: TimedIntervention[] = [], placements: 
     playing: false,
     behind: false,
     snapshot: engine.snapshot(),
+    readout: readoutOf(engine.snapshot()),
     dots: [] as Dot[],
     recentUtilisation: {} as Record<ComponentId, number>,
     metrics: [] as MetricSample[],
@@ -247,6 +268,7 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       placements: { ...state.placements, ...design.layout },
       notice: null,
       snapshot: engine.snapshot(),
+      readout: readoutOf(engine.snapshot(), state.recentUtilisation),
       ...selectionPatch,
     })
   }
@@ -398,7 +420,13 @@ export const useSimulation = create<SimulationState>()((set, get) => {
         return
       }
       // A change of the user's own ends any replay.
-      set({ snapshot: engine.snapshot(), interventions: [...interventions, { time: engine.time, intervention }], pending: [] })
+      const snapshot = engine.snapshot()
+      set({
+        snapshot,
+        readout: readoutOf(snapshot, get().recentUtilisation),
+        interventions: [...interventions, { time: engine.time, intervention }],
+        pending: [],
+      })
     },
 
     tick(realSeconds) {
@@ -450,6 +478,11 @@ export const useSimulation = create<SimulationState>()((set, get) => {
       // Only hand the charts a new array when a new sample exists, so they redraw a few times a second, not every frame.
       const sampled = engine.metrics()
       const metrics = sampled.at(-1)?.time === get().metrics.at(-1)?.time ? get().metrics : sampled
+      const utilisation = smoothUtilisation(previous, snapshot, recentUtilisation)
+      const readout =
+        performance.now() - state.readout.takenAt >= READOUT_INTERVAL_MS || design !== state.design
+          ? readoutOf(snapshot, utilisation)
+          : state.readout
       set({
         ...replayed,
         interventions,
@@ -460,7 +493,8 @@ export const useSimulation = create<SimulationState>()((set, get) => {
         snapshot,
         behind,
         dots: live.slice(-MAX_DOTS),
-        recentUtilisation: smoothUtilisation(previous, snapshot, recentUtilisation),
+        recentUtilisation: utilisation,
+        readout,
       })
     },
   }

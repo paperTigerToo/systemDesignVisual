@@ -11,6 +11,9 @@ import {
 import { useCallback, useEffect, useMemo, type DragEvent } from 'react'
 import { edgeTypes, type ConnectionEdgeType } from './ConnectionEdge'
 import { connectionId, type ComponentKind } from './design'
+import { ModelMarker } from './Assumptions'
+import { DotLayer } from './DotLayer'
+import { FirstVisitHint } from './FirstVisitHint'
 import { nodeTypes, type ComponentNode } from './nodes'
 import { PALETTE_DRAG_TYPE } from './Palette'
 import { useSimulation } from './simulationStore'
@@ -24,6 +27,7 @@ export function Canvas() {
   const problems = useSimulation((state) => state.problems)
   const selection = useSimulation((state) => state.selection)
   const loadCount = useSimulation((state) => state.loadCount)
+  const empty = useSimulation((state) => state.design.architecture.components.length === 0)
   const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
 
   // Refit whenever a whole design is loaded. An empty canvas gets a plain 100% view
@@ -66,7 +70,8 @@ export function Canvas() {
         target: to,
         type: 'connection' as const,
         data: { problem: broken.has(id) },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: broken.has(id) ? '#ff5d5d' : '#5b6573' },
+        // The arrowhead's colour comes from the theme, in CSS.
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
         selected: selection?.kind === 'connection' && selection.from === from && selection.to === to,
       }
     })
@@ -142,8 +147,17 @@ export function Canvas() {
         proOptions={{ hideAttribution: true }}
       >
         <Background />
+        <DotLayer />
         <Controls showInteractive={false} fitViewOptions={FIT_OPTIONS} />
       </ReactFlow>
+      {empty && (
+        <div className="canvas__empty">
+          <p className="canvas__empty-title">Nothing here yet</p>
+          <p>Drag a Source from the left, then a Server, and connect them by dragging from one dot to the other.</p>
+        </div>
+      )}
+      <ModelMarker />
+      <FirstVisitHint />
     </div>
   )
 }

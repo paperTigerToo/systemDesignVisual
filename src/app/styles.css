@@ -1,15 +1,43 @@
-:root {
+/*
+ * Themes. Every colour, surface and typeface the interface uses is a variable here.
+ * "Control room" is the sober default; the rest are deliberately loud. The chart series
+ * and Outcome colours stay the same in every theme because they were validated for
+ * colour-vision deficiency, and the status scale always carries a shape and a word too.
+ */
+:root,
+:root[data-theme='control-room'] {
   --bg: #0f1216;
+  --app-bg: #0f1216;
   --panel: #171b21;
+  --panel-bg: #171b21;
+  --toolbar-bg: #171b21;
+  --canvas-bg: #0f1216;
+  --node-bg: #171b21;
+  --node-shadow: none;
   --border: #2a313b;
+  --bw: 1px;
+  --edge: #3a4350;
+  --grid: #2a313b;
   --text: #e6e9ee;
   --muted: #8a94a3;
   --accent: #4fb3ff;
+  --focus: #4fb3ff;
+  --button-bg: transparent;
+  --button-text: var(--accent);
+  --button-shadow: none;
   --dot: #7fd1ff;
   --response-dot: #b9e986;
   --healthy: #3ecf8e;
   --busy: #f5b544;
   --overloaded: #ff5d5d;
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --display-font: var(--font);
+  --display-weight: 600;
+  --display-style: normal;
+  --display-tracking: 0;
+  --display-case: none;
+  --title-fill: linear-gradient(var(--text), var(--text));
+  --title-shadow: none;
   /* Chart colours, validated against the panel surface for colour-vision deficiency and contrast. */
   --series-1: #3987e5;
   --series-2: #d95926;
@@ -18,8 +46,250 @@
   --outcome-timed-out: #9085e9;
   --outcome-failed: #e66767;
   color-scheme: dark;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
+
+/* Synthwave dusk: magenta-to-cyan everything, a neon floor grid, hard pink drop shadows. */
+:root[data-theme='vaporwave'] {
+  --bg: #14002b;
+  --app-bg: linear-gradient(180deg, #14002b 0%, #3b0066 100%);
+  --panel: #2a0050;
+  --panel-bg: linear-gradient(170deg, #3d0a6b 0%, #1d0440 60%, #2c0057 100%);
+  --toolbar-bg: linear-gradient(90deg, #5b00b5 0%, #c3009c 45%, #ff3d7f 75%, #ff8a3d 100%);
+  --canvas-bg:
+    repeating-linear-gradient(0deg, rgb(255 0 200 / 0.22) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgb(0 255 255 / 0.16) 0 1px, transparent 1px 44px),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgb(255 140 60 / 0.55), transparent 70%),
+    linear-gradient(180deg, #0d0020 0%, #2e0560 55%, #7a1186 100%);
+  --node-bg: linear-gradient(180deg, rgb(45 0 90 / 0.94), rgb(90 0 110 / 0.94));
+  --node-shadow: 6px 6px 0 #ff2a6d, 0 0 22px rgb(5 217 232 / 0.45);
+  --border: #05d9e8;
+  --bw: 2px;
+  --edge: #ff6ec7;
+  --grid: transparent;
+  --text: #fff0fb;
+  --muted: #ffa6e6;
+  --accent: #05d9e8;
+  --focus: #fff700;
+  --button-bg: linear-gradient(180deg, #05d9e8, #7b5cff);
+  --button-text: #14002b;
+  --button-shadow: 4px 4px 0 #ff2a6d;
+  --dot: #05f9ff;
+  --response-dot: #fff700;
+  --healthy: #00ffa3;
+  --busy: #ffe600;
+  --overloaded: #ff3864;
+  --font: 'Trebuchet MS', 'Segoe UI', sans-serif;
+  --display-font: 'Trebuchet MS', sans-serif;
+  --display-weight: 900;
+  --display-style: italic;
+  --display-tracking: 0.12em;
+  --display-case: uppercase;
+  --title-fill: linear-gradient(180deg, #ffffff 0%, #fff700 45%, #ff2a6d 55%, #ffd1f5 100%);
+  --title-shadow: none;
+}
+
+:root[data-theme='vaporwave'] .toolbar {
+  --muted: #ffe3f6;
+  --border: #fff0fb;
+}
+
+/* Biohazard: acid green on black, hazard-tape borders, a glowing radioactive canvas. */
+:root[data-theme='toxic'] {
+  --bg: #050805;
+  --app-bg: #050805;
+  --panel: #0b1208;
+  --panel-bg: radial-gradient(ellipse at 0% 0%, rgb(182 255 0 / 0.14), transparent 60%), #0b1208;
+  --toolbar-bg: #0b0b0b;
+  --canvas-bg:
+    radial-gradient(circle at 25% 35%, rgb(182 255 0 / 0.22), transparent 38%),
+    radial-gradient(circle at 78% 70%, rgb(0 255 140 / 0.16), transparent 34%),
+    radial-gradient(circle at 60% 10%, rgb(255 230 0 / 0.1), transparent 30%),
+    #040704;
+  --node-bg: linear-gradient(180deg, #121c0c, #070b05);
+  --node-shadow: 0 0 0 1px #000, 0 0 18px rgb(182 255 0 / 0.35);
+  --border: #b6ff00;
+  --bw: 2px;
+  --edge: #6f9c1a;
+  --grid: #2b4a10;
+  --text: #e4ffb3;
+  --muted: #8fbf4a;
+  --accent: #b6ff00;
+  --focus: #ffe600;
+  --button-bg: #b6ff00;
+  --button-text: #050805;
+  --button-shadow: 0 0 14px rgb(182 255 0 / 0.6);
+  --dot: #b6ff00;
+  --response-dot: #ffe600;
+  --healthy: #39ff14;
+  --busy: #ffe600;
+  --overloaded: #ff2e88;
+  --font: Consolas, 'Courier New', monospace;
+  --display-font: Impact, 'Arial Narrow Bold', sans-serif;
+  --display-weight: 400;
+  --display-style: normal;
+  --display-tracking: 0.08em;
+  --display-case: uppercase;
+  --title-fill: linear-gradient(90deg, #b6ff00, #ffe600);
+  --title-shadow: none;
+}
+
+:root[data-theme='toxic'] .toolbar,
+:root[data-theme='toxic'] .metrics {
+  border-image: repeating-linear-gradient(-45deg, #ffe600 0 14px, #0b0b0b 14px 28px) 8;
+}
+
+:root[data-theme='toxic'] .toolbar {
+  border-bottom: 8px solid;
+}
+
+:root[data-theme='toxic'] .metrics {
+  border-top: 8px solid;
+}
+
+/* Bubblegum brutalist: hot pink polka dots, school-bus yellow panels, black outlines, hard offset shadows. */
+:root[data-theme='bubblegum'] {
+  --bg: #ff8fd8;
+  --app-bg: radial-gradient(#ff4fc1 3px, transparent 3.5px) 0 0 / 24px 24px, #ff9be0;
+  --panel: #ffffff;
+  --panel-bg: #fff36b;
+  --toolbar-bg: #00e5ff;
+  --canvas-bg:
+    radial-gradient(#ff4fc1 3px, transparent 3.5px) 0 0 / 28px 28px,
+    radial-gradient(#7b2cff 2px, transparent 2.5px) 14px 14px / 28px 28px,
+    #ffc4ec;
+  --node-bg: #ffffff;
+  --node-shadow: 6px 6px 0 #000;
+  --border: #000000;
+  --bw: 3px;
+  --edge: #000000;
+  --grid: transparent;
+  --text: #000000;
+  --muted: #5a1d4a;
+  --accent: #7b2cff;
+  --focus: #ff0055;
+  --button-bg: #ff3db8;
+  --button-text: #000000;
+  --button-shadow: 4px 4px 0 #000;
+  --dot: #7b2cff;
+  --response-dot: #00a3b8;
+  --healthy: #008a52;
+  --busy: #c25e00;
+  --overloaded: #e0002a;
+  --font: 'Comic Sans MS', 'Comic Neue', 'Chalkboard SE', cursive;
+  --display-font: 'Arial Black', 'Segoe UI Black', sans-serif;
+  --display-weight: 900;
+  --display-style: normal;
+  --display-tracking: -0.02em;
+  --display-case: uppercase;
+  --title-fill: linear-gradient(#000, #000);
+  --title-shadow: none;
+  color-scheme: light;
+}
+
+:root[data-theme='bubblegum'] .toolbar__title {
+  color: #fff36b;
+  -webkit-text-stroke: 1.5px #000;
+  background: none;
+  text-shadow: 3px 3px 0 #ff3db8;
+}
+
+/* Molten core: a lava-lamp canvas, a fire-gradient toolbar, glowing orange edges. */
+:root[data-theme='molten'] {
+  --bg: #140300;
+  --app-bg: radial-gradient(ellipse at 50% 120%, #ff4d00 0%, #7a0b00 30%, #160300 70%);
+  --panel: #260600;
+  --panel-bg: linear-gradient(180deg, #2c0700 0%, #150200 100%);
+  --toolbar-bg: linear-gradient(90deg, #ff0040 0%, #ff5a00 40%, #ffb300 75%, #ffe14d 100%);
+  --canvas-bg:
+    linear-gradient(rgb(22 3 0 / 0.55), rgb(22 3 0 / 0.55)),
+    conic-gradient(from 210deg at 50% 115%, #ff3d00, #ffb300, #ff006a, #6a00ff, #ff3d00);
+  --node-bg: linear-gradient(160deg, #3d0b00 0%, #1d0300 100%);
+  --node-shadow: 0 0 26px rgb(255 90 0 / 0.5), inset 0 1px 0 rgb(255 200 0 / 0.4);
+  --border: #ff6a00;
+  --bw: 2px;
+  --edge: #ff8c1a;
+  --grid: rgb(255 120 0 / 0.25);
+  --text: #ffeccc;
+  --muted: #e39a66;
+  --accent: #ffb300;
+  --focus: #fff04d;
+  --button-bg: linear-gradient(180deg, #ffe14d, #ff5a00);
+  --button-text: #200400;
+  --button-shadow: 0 0 16px rgb(255 120 0 / 0.7);
+  --dot: #ffe14d;
+  --response-dot: #ff7ae0;
+  --healthy: #8aff4d;
+  --busy: #ffd000;
+  --overloaded: #ff2a55;
+  --font: Georgia, 'Times New Roman', serif;
+  --display-font: Impact, 'Haettenschweiler', sans-serif;
+  --display-weight: 400;
+  --display-style: normal;
+  --display-tracking: 0.06em;
+  --display-case: uppercase;
+  --title-fill: linear-gradient(180deg, #ffffff 0%, #fff04d 40%, #ff3d00 100%);
+  --title-shadow: none;
+}
+
+:root[data-theme='molten'] .toolbar {
+  --bg: #fff3c4;
+  --panel: #ffe9a8;
+  --panel-bg: #ffe9a8;
+  --text: #1c0300;
+  --muted: #4a0d00;
+  --accent: #1c0300;
+  --border: #1c0300;
+  --overloaded: #8a0015;
+}
+
+:root[data-theme='molten'] .toolbar__title {
+  background: none;
+  color: #1c0300;
+  text-shadow: 0 0 10px rgb(255 240 77 / 0.9);
+}
+
+/* Y2K chrome: brushed-metal bars and panels, glossy chrome Components on a deep-blue screen. */
+:root[data-theme='chrome'] {
+  --bg: #f4f6f9;
+  --app-bg: #9aa3b0;
+  --panel: #e9ecf1;
+  --panel-bg: linear-gradient(90deg, #c4cad3 0%, #f4f6f9 35%, #b6bdc8 60%, #e3e7ec 100%);
+  --toolbar-bg: linear-gradient(180deg, #ffffff 0%, #d6dbe2 45%, #9aa3b0 50%, #e4e8ed 100%);
+  --canvas-bg:
+    radial-gradient(ellipse 80% 60% at 50% 35%, #2f6bff 0%, #0b1f73 50%, #02061f 100%);
+  --node-bg: linear-gradient(180deg, #ffffff 0%, #dfe3e9 48%, #aeb6c2 52%, #eef1f5 100%);
+  --node-shadow: 0 0 0 1px #ffffff inset, 0 6px 22px rgb(0 200 255 / 0.45);
+  --border: #5b6678;
+  --bw: 2px;
+  --edge: #b9f3ff;
+  --grid: rgb(120 200 255 / 0.25);
+  --text: #0b0f1a;
+  --muted: #3c4658;
+  --accent: #0047ff;
+  --focus: #ff00c8;
+  --button-bg: linear-gradient(180deg, #6aa5ff 0%, #0047ff 50%, #002a99 51%, #3d7bff 100%);
+  --button-text: #ffffff;
+  --button-shadow: 0 2px 0 #001a66;
+  --dot: #00f0ff;
+  --response-dot: #ffffff;
+  --healthy: #00873a;
+  --busy: #b35f00;
+  --overloaded: #d4001a;
+  --font: Verdana, Tahoma, sans-serif;
+  --display-font: 'Arial Black', Verdana, sans-serif;
+  --display-weight: 900;
+  --display-style: italic;
+  --display-tracking: -0.01em;
+  --display-case: none;
+  --title-fill: linear-gradient(180deg, #001a66 0%, #0047ff 48%, #000000 52%, #5c8dff 100%);
+  --title-shadow: none;
+  color-scheme: light;
+}
+
+:root[data-theme='chrome'] .request-dot--bad {
+  fill: #ff2a2a;
+}
+
 
 * {
   box-sizing: border-box;
@@ -30,11 +300,28 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  background: var(--bg);
   color: var(--text);
+  font-family: var(--font);
+}
+
+body {
+  background: var(--bg);
+}
+
+/* Zero-radius everything: buttons, panels, Components, inputs, dots, React Flow's own controls. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .app {
+  background: var(--app-bg);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -44,30 +331,44 @@ body,
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  background: var(--toolbar-bg);
+  color: var(--text);
+  border-bottom: var(--bw) solid var(--border);
 }
 
 .toolbar__title {
-  margin: 0 12px 0 0;
-  font-size: 15px;
-  font-weight: 600;
+  margin: 0;
+  font-family: var(--display-font);
+  font-size: 17px;
+  font-weight: var(--display-weight);
+  font-style: var(--display-style);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-case);
+  white-space: nowrap;
+  background: var(--title-fill);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  text-shadow: var(--title-shadow);
 }
 
 .toolbar__button {
   min-width: 72px;
   padding: 6px 14px;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--accent);
+  border: var(--bw) solid var(--accent);
+  background: var(--button-bg);
+  color: var(--button-text);
+  font-weight: 600;
+  box-shadow: var(--button-shadow);
   font: inherit;
   cursor: pointer;
 }
 
 .toolbar__button:hover:not(:disabled) {
-  background: rgb(79 179 255 / 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .toolbar__button:disabled {
@@ -90,15 +391,15 @@ body,
   gap: 8px;
   padding: 14px;
   overflow-y: auto;
-  background: var(--panel);
+  background: var(--panel-bg);
 }
 
 .palette {
-  border-right: 1px solid var(--border);
+  border-right: var(--bw) solid var(--border);
 }
 
 .side-panel {
-  border-left: 1px solid var(--border);
+  border-left: var(--bw) solid var(--border);
 }
 
 .panel__title {
@@ -131,8 +432,7 @@ body,
   flex-direction: column;
   gap: 2px;
   padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: var(--bw) solid var(--border);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -195,8 +495,7 @@ body,
   width: 100%;
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  border: var(--bw) solid var(--border);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -217,8 +516,7 @@ body,
 .danger-button {
   margin-top: 4px;
   padding: 6px 0;
-  border: 1px solid rgb(255 93 93 / 0.6);
-  border-radius: 5px;
+  border: var(--bw) solid color-mix(in srgb, var(--overloaded) 60%, transparent);
   background: transparent;
   color: var(--overloaded);
   font: inherit;
@@ -227,7 +525,7 @@ body,
 }
 
 .danger-button:hover {
-  background: rgb(255 93 93 / 0.12);
+  background: color-mix(in srgb, var(--overloaded) 12%, transparent);
 }
 
 .badge {
@@ -235,7 +533,6 @@ body,
   min-width: 18px;
   margin-left: 6px;
   padding: 0 5px;
-  border-radius: 9px;
   background: var(--overloaded);
   color: #fff;
   text-align: center;
@@ -286,8 +583,7 @@ body,
   max-width: 190px;
   margin: 0 0 8px;
   padding: 6px 8px;
-  border-radius: 5px;
-  background: rgb(255 93 93 / 0.12);
+  background: color-mix(in srgb, var(--overloaded) 12%, transparent);
   color: var(--overloaded);
   font-size: 11px;
   line-height: 1.35;
@@ -330,23 +626,26 @@ body,
 }
 
 .canvas {
+  position: relative;
   min-height: 0;
+  background: var(--canvas-bg);
 }
 
 .component {
   min-width: 170px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
+  border: var(--bw) solid var(--border);
+  background: var(--node-bg);
   color: var(--text);
+  box-shadow: var(--node-shadow);
+  font-family: var(--font);
   transition:
     border-color 400ms ease,
     box-shadow 400ms ease;
 }
 
 .component--healthy {
-  border-color: rgb(62 207 142 / 0.55);
+  border-color: color-mix(in srgb, var(--healthy) 55%, transparent);
 }
 
 .component--busy {
@@ -355,7 +654,7 @@ body,
 
 .component--overloaded {
   border-color: var(--overloaded);
-  box-shadow: 0 0 0 1px var(--overloaded), 0 0 18px rgb(255 93 93 / 0.35);
+  box-shadow: 0 0 0 1px var(--overloaded), 0 0 18px color-mix(in srgb, var(--overloaded) 35%, transparent);
 }
 
 .component--killed {
@@ -372,8 +671,7 @@ body,
   width: 100%;
   margin-top: 10px;
   padding: 4px 0;
-  border: 1px solid rgb(255 93 93 / 0.6);
-  border-radius: 5px;
+  border: var(--bw) solid color-mix(in srgb, var(--overloaded) 60%, transparent);
   background: transparent;
   color: var(--overloaded);
   font: inherit;
@@ -382,16 +680,16 @@ body,
 }
 
 .kill-button:hover {
-  background: rgb(255 93 93 / 0.12);
+  background: color-mix(in srgb, var(--overloaded) 12%, transparent);
 }
 
 .kill-button--revive {
-  border-color: rgb(62 207 142 / 0.6);
+  border-color: color-mix(in srgb, var(--healthy) 60%, transparent);
   color: var(--healthy);
 }
 
 .kill-button--revive:hover {
-  background: rgb(62 207 142 / 0.12);
+  background: color-mix(in srgb, var(--healthy) 12%, transparent);
 }
 
 .component--killed .kill-button {
@@ -443,7 +741,6 @@ body,
 
 .backlog__track {
   height: 6px;
-  border-radius: 3px;
   background: var(--border);
   overflow: hidden;
 }
@@ -489,7 +786,7 @@ body,
 }
 
 .connection {
-  stroke: var(--border) !important;
+  stroke: var(--edge) !important;
   stroke-width: 2 !important;
 }
 
@@ -521,24 +818,25 @@ body,
 
 .toolbar__button--quiet {
   border-color: var(--border);
+  background: transparent;
   color: var(--text);
+  box-shadow: none;
 }
 
 .toolbar__button--quiet:hover:not(:disabled) {
-  background: rgb(255 255 255 / 0.06);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .speed {
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: var(--bw) solid var(--border);
   overflow: hidden;
 }
 
 .speed__option {
   padding: 5px 10px;
   border: none;
-  border-right: 1px solid var(--border);
+  border-right: var(--bw) solid var(--border);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -552,7 +850,7 @@ body,
 }
 
 .speed__option--active {
-  background: rgb(79 179 255 / 0.15);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
 }
 
@@ -573,8 +871,8 @@ body,
   justify-content: space-between;
   gap: 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid rgb(255 93 93 / 0.4);
-  background: rgb(255 93 93 / 0.12);
+  border-bottom: var(--bw) solid color-mix(in srgb, var(--overloaded) 40%, transparent);
+  background: color-mix(in srgb, var(--overloaded) 12%, transparent);
   color: var(--text);
   font-size: 13px;
 }
@@ -602,8 +900,8 @@ body,
   flex-direction: column;
   gap: 8px;
   padding: 10px 16px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--panel);
+  border-top: var(--bw) solid var(--border);
+  background: var(--panel-bg);
 }
 
 .metrics__header {
@@ -685,7 +983,6 @@ body,
   width: 8px;
   height: 8px;
   margin-right: 4px;
-  border-radius: 2px;
 }
 
 /* Fixed height, pushed to the bottom, so every plot lines up whatever its legend wraps to. */
@@ -742,8 +1039,7 @@ body,
   bottom: 100%;
   z-index: 5;
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  border: var(--bw) solid var(--border);
   background: var(--bg);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -762,8 +1058,8 @@ body,
 }
 
 .notice--info {
-  border-bottom-color: rgb(79 179 255 / 0.4);
-  background: rgb(79 179 255 / 0.1);
+  border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .run-status {
@@ -787,7 +1083,6 @@ body,
 .run-status__mark--live {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
   background: var(--healthy);
 }
 
@@ -808,8 +1103,7 @@ body,
   gap: 8px;
   max-width: 340px;
   padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: var(--bw) solid var(--border);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -855,8 +1149,7 @@ body,
   max-height: 70vh;
   padding: 12px;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: var(--bw) solid var(--border);
   background: var(--panel);
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
 }
@@ -873,7 +1166,6 @@ body,
   width: 100%;
   padding: 6px 8px;
   border: none;
-  border-radius: 5px;
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -883,7 +1175,7 @@ body,
 }
 
 .scenario-menu__item:hover {
-  background: rgb(255 255 255 / 0.06);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .scenario-menu__saved {
@@ -896,7 +1188,6 @@ body,
   width: 26px;
   height: 26px;
   border: none;
-  border-radius: 5px;
   background: transparent;
   color: var(--muted);
   font-size: 16px;
@@ -904,7 +1195,7 @@ body,
 }
 
 .scenario-menu__delete:hover {
-  background: rgb(255 93 93 / 0.12);
+  background: color-mix(in srgb, var(--overloaded) 12%, transparent);
   color: var(--overloaded);
 }
 
@@ -918,8 +1209,7 @@ body,
 .seed input {
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  border: var(--bw) solid var(--border);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -962,8 +1252,7 @@ body,
 .seed__random {
   width: 28px;
   height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  border: var(--bw) solid var(--border);
   background: transparent;
   color: var(--muted);
   font-size: 15px;
@@ -973,4 +1262,309 @@ body,
 .seed__random:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* React Flow's own pieces, themed. */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-background-pattern-color: var(--grid);
+  --xy-controls-button-background-color: var(--panel);
+  --xy-controls-button-background-color-hover: color-mix(in srgb, var(--accent) 25%, var(--panel));
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--node-shadow);
+}
+
+.react-flow__arrowhead polyline {
+  stroke: var(--edge) !important;
+  fill: var(--edge) !important;
+}
+
+.react-flow__controls {
+  border: var(--bw) solid var(--border);
+}
+
+/* One layer of moving Requests, under the Components. */
+.dot-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status__glyph {
+  font-size: 10px;
+}
+
+/* Status also shows in the border's weight and pattern, not only its colour. */
+.component--busy {
+  border-width: calc(var(--bw) + 1px);
+}
+
+.component--overloaded {
+  border-width: calc(var(--bw) + 2px);
+  border-style: double;
+}
+
+.model-marker {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border: var(--bw) solid var(--busy);
+  background: color-mix(in srgb, var(--busy) 14%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-marker {
+  background: color-mix(in srgb, var(--busy) 14%, var(--panel));
+  box-shadow: var(--button-shadow);
+}
+
+.model-marker:hover {
+  background: color-mix(in srgb, var(--busy) 28%, var(--panel));
+}
+
+.model-marker__flag {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: var(--busy);
+  color: #000;
+  font-weight: 900;
+}
+
+.model-marker__link {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.assumptions {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: var(--bw) solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+  box-shadow: var(--node-shadow), 0 24px 60px rgb(0 0 0 / 0.55);
+  font-family: var(--font);
+}
+
+.assumptions::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+
+.assumptions__body {
+  padding: 18px 22px 22px;
+}
+
+.assumptions__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.assumptions__header h2 {
+  margin: 0;
+  font-family: var(--display-font);
+  font-size: 20px;
+  font-weight: var(--display-weight);
+  font-style: var(--display-style);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-case);
+}
+
+.assumptions__close,
+.first-visit__close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: var(--bw) solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.assumptions__intro {
+  margin: 12px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.assumptions__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.assumptions__list li::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.canvas__empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: 340px;
+  padding: 16px 18px;
+  border: var(--bw) dashed var(--border);
+  background: var(--panel-bg);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.canvas__empty p {
+  margin: 0;
+}
+
+.canvas__empty-title {
+  margin-bottom: 6px !important;
+  color: var(--text);
+  font-family: var(--display-font);
+  font-size: 16px;
+  font-weight: var(--display-weight);
+  text-transform: var(--display-case);
+}
+
+.first-visit {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 290px;
+  padding: 12px 14px;
+  border: var(--bw) solid var(--accent);
+  background: var(--panel-bg);
+  color: var(--text);
+  box-shadow: var(--node-shadow);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.first-visit p {
+  margin: 0;
+}
+
+.first-visit__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.first-visit__title {
+  font-family: var(--display-font);
+  font-size: 15px;
+  font-weight: var(--display-weight);
+  font-style: var(--display-style);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-case);
+}
+
+.first-visit__close {
+  width: 24px;
+  height: 24px;
+  font-size: 15px;
+}
+
+.first-visit__text {
+  color: var(--muted);
+}
+
+.first-visit__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.first-visit__action {
+  padding: 5px 10px;
+  border: var(--bw) solid var(--accent);
+  background: var(--button-bg);
+  color: var(--button-text);
+  box-shadow: var(--button-shadow);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.first-visit__action:hover {
+  filter: brightness(1.15);
+}
+
+.theme-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.theme-picker select {
+  padding: 5px 6px;
+  border: var(--bw) solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.theme-picker select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.palette__footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: var(--bw) solid var(--border);
+}
+
+.palette__footer .theme-picker {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.theme-picker__label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
