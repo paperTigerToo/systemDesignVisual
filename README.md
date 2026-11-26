@@ -2,7 +2,7 @@
 
 Drag Sources, Servers, Databases and Queues onto a canvas, wire them into an architecture, and send simulated traffic through it. Requests move along the Connections, overloaded Components turn red, Backlogs fill up, and rolling charts show throughput, latency and Outcomes as they happen. Change anything mid-Run (raise the Rate, Kill a Server, put a Queue in front of slow work) and watch the consequences. Underneath is a small, deterministic discrete-event simulation engine, checked against textbook queueing formulas.
 
-**Live:** LIVE_URL
+**Live:** https://papertigertoo.github.io/systemDesignVisual/
 
 ![The default Scenario at 14 seconds: two overloaded Web servers waiting on one saturated Database](docs/images/screenshot.png)
 
